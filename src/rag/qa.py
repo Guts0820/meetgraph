@@ -139,18 +139,19 @@ class KnowledgeQA:
                 debug=debug_dict,
             )
 
-        # 术语约束：查询命中的术语 + 检索结果里出现的术语（关掉术语层时为空）
+        # 术语约束：查询命中的术语 + Top-1 片段命中的术语（关掉术语层时为空）。
+        # 只取 Top-1 是为了避免把无关片段里出现的术语定义也塞进 prompt——
+        # 注入无关术语定义会稀释「必须使用公司标准术语」这条约束。
         term_pool: dict[str, Any] = {}
         if use_terms:
             for term in debug.query_terms:
                 for item in self.terminology.terms:
                     if item.term == term:
                         term_pool[item.term] = item
-            for result in results:
-                for name in result.term_hits:
-                    for item in self.terminology.terms:
-                        if item.term == name and name not in term_pool:
-                            term_pool[name] = item
+            for name in getattr(results[0], "term_hits", ()):
+                for item in self.terminology.terms:
+                    if item.term == name and name not in term_pool:
+                        term_pool[name] = item
         used_terms = list(term_pool)
         prompt_terms = list(term_pool.values()) if inject else []
 

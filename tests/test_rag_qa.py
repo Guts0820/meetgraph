@@ -75,6 +75,16 @@ async def test_no_hit_short_circuits_without_llm_call(rag_index) -> None:
         assert answer.citations == []
 
 
+async def test_used_terms_are_limited_to_query_and_top_chunk(rag_index) -> None:
+    """注入 prompt 的术语只来自查询与 Top-1 片段，不把无关片段的术语也算进来。"""
+    qa, _ = _qa(rag_index)
+
+    answer = await qa.ask("DT 数据多久接入一次？")
+
+    top_terms = set(answer.retrieved[0].term_hits)
+    assert set(answer.used_terms) <= (set(answer.debug["query_terms"]) | top_terms)
+
+
 async def test_answer_to_dict_is_serializable(rag_index) -> None:
     qa, _ = _qa(rag_index, "见 [1]")
 
