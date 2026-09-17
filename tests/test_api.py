@@ -35,6 +35,7 @@ def test_healthz_reports_integration_readiness(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert set(body["integrations"]) == {"llm", "jira", "feishu", "whisper"}
     assert isinstance(body["active_meetings"], int)
+    assert "rag" in body
 
 
 def test_start_meeting_returns_websocket_url(client: TestClient) -> None:
@@ -46,6 +47,66 @@ def test_start_meeting_returns_websocket_url(client: TestClient) -> None:
 
 def test_unknown_meeting_returns_error(client: TestClient) -> None:
     assert "error" in client.get("/api/v1/meeting/nope/summary").json()
+
+
+def test_ask_endpoint_returns_answer_with_citations(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """知识库问答接口：把 Answer 序列化成 JSON（这里替换掉真实 QA，避免调模型）。"""
+    from src.rag.qa import Answer
+    from src.rag import service
+
+    class FakeQA:
+        async def ask(self, question: str, top_k: int = 5) -> Answer:
+            return Answer(
+                question=question,
+                text="版本冻结后只允许缺陷修复与配置调整 [1]",
+                citations=[
+                    {
+                        "index": 1,
+                        "chunk_id": "c1",
+                        "title": "研发流程-版本冻结与灰度发布",
+                        "section": "1. 版本冻结",
+                        "source_type": "knowledge",
+                        "citation": "研发流程-版本冻结与灰度发布 / 1. 版本冻结",
+                    }
+                ],
+                retrieved=[],
+                used_terms=["版本冻结"],
+            )
+
+    monkeypatch.setattr(service, "get_qa", lambda *a, **kw: FakeQA())
+
+    body = client.post("/api/v1/ask", json={"question": "版本冻结之后能改什么？"}).json()
+
+    assert body["answered"] is True
+    assert body["citations"][0]["title"] == "研发流程-版本冻结与灰度发布"
+    assert body["used_terms"] == ["版本冻结"]
+
+
+def test_ask_endpoint_validates_payload(client: TestClient) -> None:
+    assert client.post("/api/v1/ask", json={"question": ""}).status_code == 422
+    assert (
+        client.post("/api/v1/ask", json={"question": "x", "top_k": 99}).status_code
+        == 422
+    )
+
+
+def test_reindex_endpoint_returns_stats(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.rag import service
+
+    monkeypatch.setattr(
+        service,
+        "reindex",
+        lambda: {"chunks": 12, "docs": 3, "embedder": "hash-512"},
+    )
+
+    body = client.post("/api/v1/knowledge/reindex").json()
+
+    assert body["status"] == "ok"
+    assert body["chunks"] == 12
 
 
 def test_demo_endpoint_serializes_pipeline_result(

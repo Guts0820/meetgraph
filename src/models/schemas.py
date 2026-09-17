@@ -15,7 +15,7 @@ LangGraph 节点读写用的 TypedDict 视图。
 from __future__ import annotations
 
 from enum import Enum
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -152,6 +152,22 @@ class FollowUpResult(BaseModel):
     duplicates_skipped: int = 0
 
 
+class RetrievedContext(BaseModel):
+    """会议处理过程中检索到的历史上下文（RAG 节点产出）。
+
+    ``history`` 只放可引用的片段（citation + 原文 + 分数），``term_definitions``
+    只放命中术语的标准定义——两者都是给下游 Agent 写 prompt 用的。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = ""
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    terms: list[str] = Field(default_factory=list)
+    term_definitions: list[dict[str, str]] = Field(default_factory=list)
+    retrieved_at: str = ""
+
+
 class MeetingState(TypedDict, total=False):
     """整个 Pipeline 共享的会议状态（与 meeting_graph.GraphState 保持一致）"""
 
@@ -160,6 +176,7 @@ class MeetingState(TypedDict, total=False):
     audio_data: bytes
     transcript: TranscriptResult
     transcript_text: str
+    context: RetrievedContext
     summary: MeetingSummary
     actions: ActionResult
     insights: MeetingInsight

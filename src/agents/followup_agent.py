@@ -67,6 +67,8 @@ class FollowUpAgent:
             summary_md = self._format_summary_markdown(summary)
             actions_md = self._format_actions_markdown(actions)
             insights_md = self._format_insights_markdown(insights)
+            # RAG 节点（可选）检索到的历史决议
+            context_md = self._format_context_markdown(state.get("context"))
 
             # Step 2: 发送到飞书
             if self.feishu.is_enabled:
@@ -104,7 +106,7 @@ class FollowUpAgent:
 
             # Step 5: 生成报告
             result.report_url = self._generate_report(
-                meeting_id, summary_md, actions_md, insights_md
+                meeting_id, summary_md, actions_md, insights_md, context_md
             )
 
             state["followup"] = result
@@ -226,18 +228,39 @@ class FollowUpAgent:
         return "\n".join(lines)
 
     @staticmethod
+    def _format_context_markdown(context: Any | None) -> str:
+        """把 RAG 检索到的历史决议渲染成报告章节（无内容时返回空串）。"""
+        history = list(getattr(context, "history", []) or [])
+        if not history:
+            return ""
+
+        lines = []
+        for item in history:
+            text = str(item.get("text", "")).replace("\n", " ").strip()
+            lines.append(f"- **{item.get('citation', '')}**：{text[:200]}")
+        terms = [t for t in (getattr(context, "terms", []) or [])]
+        if terms:
+            lines.append(f"\n命中术语：{'、'.join(terms)}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _generate_report(
         meeting_id: str,
         summary_md: str,
         actions_md: str,
         insights_md: str,
+        context_md: str = "",
     ) -> str:
         """生成完整会议报告并写入 Markdown 文件。"""
+        context_section = (
+            f"---\n\n## 相关历史决议\n\n{context_md}\n\n" if context_md else ""
+        )
         report = (
             f"# 会议报告 - {meeting_id}\n\n"
             f"生成时间: {datetime.now().isoformat()}\n\n"
             f"---\n\n"
             f"## 会议纪要\n\n{summary_md}\n\n"
+            f"{context_section}"
             f"---\n\n"
             f"## 待办事项\n\n{actions_md}\n\n"
             f"---\n\n"

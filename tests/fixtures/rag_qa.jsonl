@@ -1,0 +1,24 @@
+{"id": "q01", "category": "terminology", "question": "QoE 质差定位的验收标准是什么？", "expected_sources": ["产品需求-无线质差原因识别"], "expected_terms": ["QoE", "用户体验质量"]}
+{"id": "q02", "category": "terminology", "question": "MRD 里写的方案设计评审时间是什么时候？", "expected_sources": ["产品需求-无线质差原因识别"], "expected_terms": ["MRD", "市场需求文档"]}
+{"id": "q03", "category": "terminology", "question": "CDR 数据的接入频率和延迟要求是多少？", "expected_sources": ["数据接入规范-话单与路测"], "expected_terms": ["CDR", "话单"]}
+{"id": "q04", "category": "terminology", "question": "DT 数据多久接入一次？", "expected_sources": ["数据接入规范-话单与路测"], "expected_terms": ["DT", "路测"]}
+{"id": "q05", "category": "terminology", "question": "PoC 局点验证安排在哪个月？", "expected_sources": ["产品需求-无线质差原因识别", "2026-08-19-方案评审与数据接入"], "expected_terms": ["PoC", "试点局点"]}
+{"id": "q06", "category": "terminology", "question": "RCA 的结论必须包含什么才允许通过评审？", "expected_sources": ["产品需求-无线质差原因识别"], "expected_terms": ["RCA", "根因定位"]}
+{"id": "q07", "category": "terminology", "question": "KQI 和 KPI 在我们文档里是怎么区分的？", "expected_sources": ["内部术语表"], "expected_terms": ["KQI", "KPI"]}
+{"id": "q08", "category": "terminology", "question": "灰度的流量比例和观察时长规则是什么？", "expected_sources": ["研发流程-版本冻结与灰度发布"], "expected_terms": ["灰度发布"]}
+{"id": "q09", "category": "meeting_history", "question": "谁负责整理内部术语表与标注规范，截止时间是什么时候？", "expected_sources": ["2026-08-05-质差根因项目开工会"], "expected_terms": ["王芳"]}
+{"id": "q10", "category": "meeting_history", "question": "反事实推断方案初稿是谁负责的？", "expected_sources": ["2026-08-05-质差根因项目开工会"], "expected_terms": ["李明", "反事实推断"]}
+{"id": "q11", "category": "meeting_history", "question": "DK-Root 分类路线是哪次会议决定放弃的？", "expected_sources": ["2026-08-05-质差根因项目开工会"], "expected_terms": ["DK-Root"]}
+{"id": "q12", "category": "meeting_history", "question": "路测接入频率是哪次会议调整的，调整成什么了？", "expected_sources": ["2026-08-19-方案评审与数据接入"], "expected_terms": ["路测"]}
+{"id": "q13", "category": "meeting_history", "question": "试点局点选了几个，场景怎么分布？", "expected_sources": ["2026-08-19-方案评审与数据接入"], "expected_terms": ["试点局点"]}
+{"id": "q14", "category": "meeting_history", "question": "版本冻结日定在哪天？", "expected_sources": ["2026-09-02-版本冻结与灰度计划"], "expected_terms": ["版本冻结"]}
+{"id": "q15", "category": "meeting_history", "question": "回滚脚本由谁准备，什么时候提交？", "expected_sources": ["2026-09-02-版本冻结与灰度计划"], "expected_terms": ["赵伟"]}
+{"id": "q16", "category": "meeting_history", "question": "数据脱敏改造的负责人和截止时间是什么？", "expected_sources": ["2026-08-19-方案评审与数据接入"], "expected_terms": ["赵伟"]}
+{"id": "q17", "category": "policy", "question": "话单里的用户标识必须怎么处理才能入库？", "expected_sources": ["数据接入规范-话单与路测"], "expected_terms": ["话单"]}
+{"id": "q18", "category": "policy", "question": "单小时数据缺失率超过多少会暂停入库？", "expected_sources": ["数据接入规范-话单与路测"], "expected_terms": []}
+{"id": "q19", "category": "policy", "question": "位置信息精度要求保留到什么级别？", "expected_sources": ["数据接入规范-话单与路测"], "expected_terms": []}
+{"id": "q20", "category": "policy", "question": "版本冻结之后还允许做哪些变更？", "expected_sources": ["研发流程-版本冻结与灰度发布"], "expected_terms": ["版本冻结"]}
+{"id": "q21", "category": "policy", "question": "出现什么情况必须立即回滚？", "expected_sources": ["研发流程-版本冻结与灰度发布"], "expected_terms": []}
+{"id": "q22", "category": "policy", "question": "交付基线要变更需要走什么流程？", "expected_sources": ["研发流程-版本冻结与灰度发布", "数据接入规范-话单与路测"], "expected_terms": ["交付基线"]}
+{"id": "q23", "category": "policy", "question": "质差原因体系里包含哪几类原因？", "expected_sources": ["产品需求-无线质差原因识别", "2026-08-05-质差根因项目开工会"], "expected_terms": ["质差原因体系"]}
+{"id": "q24", "category": "policy", "question": "单小区单日推理耗时要求是多少？", "expected_sources": ["产品需求-无线质差原因识别"], "expected_terms": []}

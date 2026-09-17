@@ -92,7 +92,9 @@ class SummaryAgent:
             return {"summary": state["summary"]}
 
         try:
-            summary = await self._generate_summary(transcript_text)
+            summary = await self._generate_summary(
+                transcript_text, state.get("context")
+            )
             state["summary"] = summary
             logger.info(
                 f"[SummaryAgent] Summary generated: {summary.title}, "
@@ -108,14 +110,23 @@ class SummaryAgent:
             updates["errors"] = errors_delta
         return updates
 
-    async def _generate_summary(self, transcript: str) -> MeetingSummary:
-        """调用 LLM 生成结构化摘要"""
+    async def _generate_summary(
+        self, transcript: str, context: Any | None = None
+    ) -> MeetingSummary:
+        """调用 LLM 生成结构化摘要。
+
+        ``context`` 是 RAG 节点检索到的历史决议与术语（可为 None）。它作为「背景」
+        拼在转写文本之前，让纪要能对齐历史上下文，并在 prompt 里明确「不得把背景
+        当成本次会议内容」。
+        """
+        user_content = SUMMARY_USER_PROMPT.format(transcript=transcript)
+        background = self._format_background(context)
+        if background:
+            user_content = f"{background}\n\n{user_content}"
+
         messages = [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": SUMMARY_USER_PROMPT.format(transcript=transcript),
-            },
+            {"role": "user", "content": user_content},
         ]
 
         result = await self.llm.chat_json(
@@ -136,6 +147,28 @@ class SummaryAgent:
             decisions=result.get("decisions", []),
             next_steps=result.get("next_steps", []),
         )
+
+    @staticmethod
+    def _format_background(context: Any | None) -> str:
+        """把 RAG 上下文渲染成 prompt 里的背景块（无内容时返回空串）。"""
+        history = list(getattr(context, "history", []) or [])
+        terms = list(getattr(context, "term_definitions", []) or [])
+        if not history and not terms:
+            return ""
+
+        lines = [
+            "## 历史背景（仅供对齐上下文，不得当作本次会议内容写进纪要）",
+        ]
+        for item in history:
+            text = str(item.get("text", "")).replace("\n", " ")[:180]
+            lines.append(f"- {item.get('citation', '')}：{text}")
+        if terms:
+            lines.append("## 公司术语（使用标准说法）")
+            for term in terms[:6]:
+                lines.append(
+                    f"- {term.get('canonical', term.get('term', ''))}：{term.get('definition', '')}"
+                )
+        return "\n".join(lines)
 
     @staticmethod
     def _generate_fallback_summary(transcript: str) -> MeetingSummary:

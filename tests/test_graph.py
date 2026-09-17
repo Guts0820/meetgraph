@@ -15,7 +15,7 @@ from src.integrations.idempotency import SyncLedger
 from src.models.schemas import MeetingStatus
 from tests.fakes import FakeFeishuClient, FakeJiraClient, FakeLLM
 
-EXPECTED_NODES = {"transcription", "summary", "action", "insight", "followup"}
+EXPECTED_NODES = {"transcription", "context", "summary", "action", "insight", "followup"}
 
 
 def _build(**kwargs):
@@ -24,6 +24,7 @@ def _build(**kwargs):
         jira_client=kwargs.pop("jira_client", FakeJiraClient(enabled=False)),
         feishu_client=kwargs.pop("feishu_client", FakeFeishuClient(enabled=False)),
         ledger=kwargs.pop("ledger", SyncLedger(":memory:")),
+        retriever=kwargs.pop("retriever", None),
         **kwargs,
     )
 
@@ -34,13 +35,14 @@ def test_graph_registers_five_agents() -> None:
 
 
 def test_graph_fan_out_and_fan_in_edges() -> None:
-    """转写节点有三条出边（Fan-out），三个分析节点都指向跟进节点（Fan-in）。"""
+    """上下文节点有三条出边（Fan-out），三个分析节点都指向跟进节点（Fan-in）。"""
     graph = _build()
     edges = {(source, target) for source, target in graph.edges}
 
-    assert ("transcription", "summary") in edges
-    assert ("transcription", "action") in edges
-    assert ("transcription", "insight") in edges
+    assert ("transcription", "context") in edges
+    assert ("context", "summary") in edges
+    assert ("context", "action") in edges
+    assert ("context", "insight") in edges
     assert ("summary", "followup") in edges
     assert ("action", "followup") in edges
     assert ("insight", "followup") in edges
@@ -52,18 +54,20 @@ def test_graph_compiles() -> None:
         jira_client=FakeJiraClient(enabled=False),
         feishu_client=FakeFeishuClient(enabled=False),
         ledger=SyncLedger(":memory:"),
+        retriever=None,
     )
     assert compiled is not None
 
 
 async def test_pipeline_end_to_end_offline(offline_env: Path) -> None:
-    """无音频、无外部服务时，整条 Pipeline 仍然跑完并落盘报告。"""
+    """无音频、无外部服务、无索引时，整条 Pipeline 仍然跑完并落盘报告。"""
     result = await run_meeting_pipeline(
         "unit-e2e",
         audio_data=b"",
         llm_client=FakeLLM(),
         jira_client=FakeJiraClient(enabled=False),
         feishu_client=FakeFeishuClient(enabled=False),
+        retriever=None,
     )
 
     assert result["status"] == MeetingStatus.COMPLETED
@@ -71,6 +75,9 @@ async def test_pipeline_end_to_end_offline(offline_env: Path) -> None:
 
     # 转写走内置演示数据
     assert len(result["transcript"].segments) == 8
+
+    # 没有索引时上下文为空，但不影响主流程
+    assert result["context"].history == []
 
     # 纪要 / 待办 / 洞察 三个并行 Agent 都产出了结果
     assert result["summary"].topics
@@ -82,6 +89,28 @@ async def test_pipeline_end_to_end_offline(offline_env: Path) -> None:
     text = report.read_text(encoding="utf-8")
     for section in ("## 会议纪要", "## 待办事项", "## 会议洞察"):
         assert section in text
+
+
+async def test_pipeline_with_retriever_adds_history_section(
+    offline_env: Path, rag_index
+) -> None:
+    """接上检索器后，报告里会出现「相关历史决议」，且上下文可引用。"""
+    result = await run_meeting_pipeline(
+        "unit-rag",
+        llm_client=FakeLLM(),
+        jira_client=FakeJiraClient(enabled=False),
+        feishu_client=FakeFeishuClient(enabled=False),
+        retriever=rag_index.retriever,
+    )
+
+    assert result["errors"] == []
+    assert result["context"].history
+    assert all(
+        item["citation"] for item in result["context"].history
+    )
+
+    report = Path(result["followup"].report_url).read_text(encoding="utf-8")
+    assert "## 相关历史决议" in report
 
 
 async def test_pipeline_sync_is_idempotent(offline_env: Path) -> None:

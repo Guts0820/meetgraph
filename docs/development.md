@@ -92,6 +92,38 @@ class RiskAgent:
 - **数据库**：台账是 SQLite，直接用 `sqlite3 data/sync-ledger.db "select * from sync_ledger"` 看；
 - **假实现**：需要构造特定失败场景时，用 `FakeLLM(delay=..., fail_times=...)`、`FakeJiraClient(fail=True)`，比打真实接口快得多也可控。
 
+## 检索增强（RAG）开发
+
+```bash
+python scripts/rag_cli.py reindex                  # 重建索引（内部文档 + 会议纪要 + 术语表）
+python scripts/rag_cli.py stats                    # 索引概览
+python scripts/rag_cli.py search "版本冻结"          # 只看检索结果与召回通道
+python scripts/rag_cli.py ask "DT 多久接入一次"     # 检索 + 生成（带引用）
+python scripts/rag_cli.py ask "..." --no-terms      # 关掉术语层做对照
+python scripts/evaluate_rag.py                     # 检索评测 + 术语消融矩阵
+```
+
+改语料/改术语后必须重建索引，否则检索还是旧内容：
+
+| 想改什么 | 改哪里 | 要不要重建索引 |
+|----------|--------|----------------|
+| 语料文档 | `data/knowledge/*.md`、`data/meetings/*.md`（或设 `RAG_CORPUS_DIRS`） | 要 |
+| 术语表 | `config/glossary.json`（term / canonical / aliases / definition） | 要（术语表自身也是可检索文档） |
+| 分块大小 | `rag/chunking.py::chunk_markdown(max_chars, overlap_chars)` | 要 |
+| 向量后端 | 环境变量 `RAG_EMBEDDER`（`auto` / `hash` / `openai`） | 要（维度变了） |
+| 召回权重 / 熔断 | `HybridRetriever(vector_weight, bm25_weight, expansion_weight, rrf_k)` | 不要 |
+| 精排特征权重 | `rag/rerank.py::RerankConfig` | 不要 |
+
+**调参必须走评测**：改完 `RerankConfig` 或召回权重后跑一次 `python scripts/evaluate_rag.py`（几秒钟，离线），对比 `reports/rag-eval-*.json` 里的 Recall@K / MRR 差值再看要不要保留——本项目第一版就是靠这个发现「术语扩展把排序做坏了」的。
+
+约定与坑：
+
+- 术语表是**唯一权威来源**：语料正文只写标准术语，缩写和别名登记在 glossary，否则查询扩展无从下手，也测不出术语层的价值；
+- 向量后端必须可降级：新增 embedder 时保证 `resolve_embedder()` 失败能退回 `HashingEmbedder`，否则无网络/无模型的环境直接不可用；
+- 单元测试**不许加载真实模型**：用 `rag_index` fixture（离线哈希向量），否则 CI 会依赖网络与几百 MB 缓存；
+- 检索失败绝不能抛给主流程：Context 节点的约定是「写空上下文 + 记 error」（见 `test_retrieval_failure_is_recorded_not_raised`）；
+- 查询侧与文档侧必须用同一套分词（`rag/tokenize.py`），否则 BM25 打分不可比。
+
 ## 提交前检查
 
 ```bash

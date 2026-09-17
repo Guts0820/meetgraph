@@ -11,27 +11,31 @@
 │ LangGraph StateGraph：Pipeline + Fan-out/Fan-in   │
 ├─────────────────────────────────────────────────┤
 │ Agent 层                                         │
-│ Transcription / Summary / Action / Insight /     │
-│ Follow-up                                        │
+│ Transcription / Context(RAG) / Summary / Action / │
+│ Insight / Follow-up                              │
+├─────────────────────────────────────────────────┤
+│ 检索层 (RAG)                                     │
+│ 分块 → 混合检索(向量+BM25+RRF) → 精排 → 引用        │
 ├─────────────────────────────────────────────────┤
 │ 集成层 (Integration)                             │
 │ MiniMax LLM / WhisperX + pyannote / Jira / 飞书    │
 ├─────────────────────────────────────────────────┤
 │ 数据层 (Storage)                                 │
-│ 进程内会议结果 / SQLite 同步台账 / Markdown 报告     │
+│ 进程内会议结果 / SQLite 台账 / 向量索引 / 报告        │
 └─────────────────────────────────────────────────┘
 ```
 
 ## 2. 编排模式
 
 ```
-START → [Transcription] → Fan-out → [Summary | Action | Insight] → Fan-in → [Follow-up] → END
+START → [Transcription] → [Context/RAG] → Fan-out → [Summary | Action | Insight] → Fan-in → [Follow-up] → END
 ```
 
 | 阶段 | 模式 | 为什么 |
 |------|------|--------|
 | 音频 → 转写 | Pipeline（串行） | 后续所有分析都依赖转写文本，无法并行 |
-| 转写 → 纪要/待办/洞察 | Fan-out（并行） | 三者输入相同、输出互不依赖，串行只会叠加延迟 |
+| 转写 → 检索上下文 | Pipeline（串行） | 检索结果要喂给三个分析 Agent，必须先行完成 |
+| 检索 → 纪要/待办/洞察 | Fan-out（并行） | 三者输入相同、输出互不依赖，串行只会叠加延迟 |
 | 纪要+待办+洞察 → 跟进 | Fan-in（汇聚） | 跟进要汇总三路结果，必须等全部完成 |
 
 并行收益由 `scripts/evaluate.py` 现场测量（模拟 0.4s/次 LLM 延迟时加速比约 2.9x），不写成文档里的固定数字。
@@ -112,4 +116,39 @@ except Exception as e:
 
 - 结构化日志：`[AgentName] action: meeting_id, detail`，loguru 输出到 stderr；
 - 关键计数：`ActionAgent` 每次同步都输出 `created / skipped / failed`，落进 `ActionResult.sync_status`；
-- 健康检查：`GET /healthz` 返回版本、各集成是否配置就绪、活跃会议数，只做配置探测、不发外部请求。
+- 健康检查：`GET /healthz` 返回版本、各集成是否配置就绪、知识库索引状态、活跃会议数，只做配置探测、不发外部请求。
+
+## 8. 检索增强（RAG）
+
+### 8.1 模块与数据流
+
+```
+data/knowledge(内部文档) ─┐
+data/meetings(会议纪要)  ─┼─► 分块(标题感知+滑窗) ─► 向量索引(numpy) ┐
+config/glossary.json    ─┘                                          ├─► 混合检索 ─► 精排 ─► Top-K ─► 引用
+                                            ─► BM25 倒排 ────────────┘
+```
+
+| 模块 | 职责 |
+|------|------|
+| `rag/chunking.py` | Markdown 标题感知分块 + 超长滑窗重叠，产出带 doc/section 元数据的 chunk |
+| `rag/tokenize.py` | 中文二元切分 + 西文词，查询额外补单字（无 jieba 依赖） |
+| `rag/bm25.py` | BM25 倒排（精确命中：编号、人名、数字门限） |
+| `rag/embedding.py` | 可插拔向量后端：本地 BGE / 离线哈希 / OpenAI 兼容，失败自动降级 |
+| `rag/vector_store.py` | numpy 余弦索引 + 落盘 |
+| `rag/terminology.py` | 术语表：匹配、查询扩展、加权、prompt 约束、术语表自身入库 |
+| `rag/retriever.py` | 四路召回 + RRF 融合 + 引用生成 |
+| `rag/rerank.py` | 确定性精排：查询词覆盖度、连续短语、小节标题、术语密度 |
+| `rag/qa.py` | 带引用的问答：资料约束 + 编号引用 + 术语约束，无命中不调用 LLM |
+| `rag/ingest.py` | 索引构建/加载/落盘（`data/index`） |
+
+### 8.2 与主链路的关系
+
+- **Context 节点**（`agents/context_agent.py`）：转写 → 构造查询（开场片段 + 命中术语）→ 检索历史会议 → 写 `state["context"]`；
+- Summary 的 user prompt 前置「历史背景 + 公司术语」块，并明确「背景不得当成本次会议内容」；
+- Follow-up 报告新增「相关历史决议」章节；
+- **失败不阻塞**：没有索引、检索异常、无命中，一律写空上下文并记一条 error，主流程照常完成（有 `test_retrieval_failure_is_recorded_not_raised` 覆盖）。
+
+### 8.3 为什么扩展词走独立通道
+
+第一版把「原查询 + 术语标准名/别名」拼成一个查询去检索，实测 Recall@1 反而从 0.625 掉到 0.417：扩展词稀释了原查询的语义中心，术语表 chunk 还靠术语密度抢占首位。现在向量通道永远只用原查询，扩展只作为**独立低权重通道**参与 RRF，术语表 chunk 在查询不含术语时降权 0.6。完整消融数据见 [evaluation.md](evaluation.md#五rag-检索评测scriptssevaluate_ragpy)。

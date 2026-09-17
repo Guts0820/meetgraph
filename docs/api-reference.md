@@ -20,11 +20,66 @@ GET /healthz
     "feishu": true,
     "whisper": "large-v2"
   },
-  "ledger": "D:\\meetgraph\\data\\sync-ledger.db"
+  "ledger": "D:\\meetgraph\\data\\sync-ledger.db",
+  "rag": {
+    "index": "ready",
+    "chunks": 54,
+    "docs": 7,
+    "embedder": "BAAI/bge-small-zh-v1.5",
+    "built_at": "2026-09-17T12:12:19"
+  }
 }
 ```
 
-只做配置探测，不发起任何外部请求 —— 探活不应依赖第三方可用性。
+只做配置探测（RAG 部分只读 `data/index/meta.json`，不加载模型、不发起外部请求）——探活不应依赖第三方可用性。
+
+## 知识库问答（RAG）
+
+### 提问
+
+```
+POST /api/v1/ask
+Content-Type: application/json
+
+{"question": "DT 数据多久接入一次？", "top_k": 5}
+```
+
+```json
+{
+  "question": "DT 数据多久接入一次？",
+  "answer": "路测数据每周一、周四各接入一次 [1]。",
+  "answered": true,
+  "citations": [
+    {
+      "index": 1,
+      "chunk_id": "数据接入规范-话单与路测#1-0-9f2c1a",
+      "title": "数据接入规范-话单与路测",
+      "section": "1. 数据源与频率",
+      "source_type": "knowledge",
+      "citation": "数据接入规范-话单与路测 / 1. 数据源与频率"
+    }
+  ],
+  "used_terms": ["DT", "路测"],
+  "retrieved": [{"citation": "...", "score": 0.0412, "features": {"coverage": 0.8, "phrase": 1.0, "section": 1.0}}],
+  "debug": {"expanded_query": "DT 数据多久接入一次？ 路测 Drive Test 路测数据", "channels": ["vector:original", "bm25:original", "bm25:expanded"]}
+}
+```
+
+- 检索不到相关内容时返回 `answered: false`、`answer: "资料中未提及相关内容。"`，**不会调用 LLM**；
+- `citations[].chunk_id` 可直接在 `data/index/chunks.jsonl` 里核验，越界或编造的编号会被过滤掉；
+- `used_terms` 是本次注入 prompt 的公司术语，`debug.channels` 说明走了哪几路召回（排障用）。
+
+### 重建索引
+
+```
+POST /api/v1/knowledge/reindex
+```
+
+```json
+{"status": "ok", "chunks": 54, "docs": 7, "by_source": {"knowledge": 17, "meeting": 17, "glossary": 20}, "embedder": "BAAI/bge-small-zh-v1.5", "dim": 512, "built_at": "2026-09-17T12:20:01"}
+```
+
+语料来自 `data/knowledge`、`data/meetings` 与 `config/glossary.json`，构建是 CPU 密集的同步流程，服务端放在线程里执行以免阻塞事件循环。
 
 ## REST API
 

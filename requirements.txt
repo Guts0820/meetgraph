@@ -14,6 +14,10 @@ pyannote.audio>=3.3.0
 torch>=2.1.0
 torchaudio>=2.1.0
 
+# === 知识库检索（RAG） ===
+# 本地向量模型（BAAI/bge-small-zh-v1.5 等）通过 transformers 加载，无需 sentence-transformers
+transformers>=4.40.0
+
 # === Web 服务 ===
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0

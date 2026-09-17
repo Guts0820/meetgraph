@@ -19,9 +19,10 @@ venv/
 env/
 *.whl
 
-# 运行时产物
+# 运行时产物（知识语料 data/knowledge、data/meetings 需要入库，故只忽略产物）
 reports/
-data/
+data/sync-ledger.db
+data/index/
 logs/
 *.log
 

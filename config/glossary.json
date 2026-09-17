@@ -1,0 +1,147 @@
+{
+  "version": "2026-09",
+  "updated_at": "2026-09-17",
+  "description": "公司内部术语表：缩写、别名与标准定义的唯一权威来源。文档正文只写标准术语，缩写与别名统一登记在此。",
+  "terms": [
+    {
+      "term": "QoE",
+      "canonical": "用户体验质量",
+      "aliases": ["Quality of Experience"],
+      "definition": "从用户主观感受出发衡量业务质量的指标，关注卡顿、时延、清晰度等体验维度，与网络侧的性能指标相对。",
+      "owner": "无线算法组"
+    },
+    {
+      "term": "KQI",
+      "canonical": "关键质量指标",
+      "aliases": ["业务质量指标", "Key Quality Indicator"],
+      "definition": "直接刻画业务可用性与体验的指标集合，如视频启动时延、卡顿率、下载速率，由多个网络性能指标共同决定。",
+      "owner": "无线算法组"
+    },
+    {
+      "term": "KPI",
+      "canonical": "网络性能指标",
+      "aliases": ["Key Performance Indicator"],
+      "definition": "网元侧可采集的性能计数与派生指标，如接通率、切换成功率、上行底噪。",
+      "owner": "网优组"
+    },
+    {
+      "term": "MRD",
+      "canonical": "市场需求文档",
+      "aliases": ["Market Requirement Document"],
+      "definition": "描述市场与客户需求、业务场景与验收标准的文档，评审通过后才能进入方案设计阶段。",
+      "owner": "产品部"
+    },
+    {
+      "term": "PRD",
+      "canonical": "产品需求文档",
+      "aliases": ["Product Requirement Document"],
+      "definition": "把市场需求文档拆解为可开发的功能描述、接口与验收用例的文档。",
+      "owner": "产品部"
+    },
+    {
+      "term": "RCA",
+      "canonical": "根因定位",
+      "aliases": ["根因分析", "Root Cause Analysis"],
+      "definition": "从现象出发回溯到导致质差的真实原因的过程，区别于只描述相关性的分类模型。",
+      "owner": "无线算法组"
+    },
+    {
+      "term": "反事实推断",
+      "canonical": "反事实推断",
+      "aliases": ["反事实归因", "counterfactual inference"],
+      "definition": "通过构造「如果没有发生该因素，指标会怎样」的对照来估计因果效应，用于把相关性结论升级为可解释的归因结论。",
+      "owner": "无线算法组"
+    },
+    {
+      "term": "质差",
+      "canonical": "质差",
+      "aliases": ["质差小区", "体验质差"],
+      "definition": "业务质量指标低于约定门限的状态，通常按小区或栅格粒度判定。",
+      "owner": "网优组"
+    },
+    {
+      "term": "弱覆盖",
+      "canonical": "弱覆盖",
+      "aliases": ["覆盖不足"],
+      "definition": "接收电平低于门限导致业务受限的覆盖问题，属于质差原因体系中的一类。",
+      "owner": "网优组"
+    },
+    {
+      "term": "上下行干扰",
+      "canonical": "上下行干扰",
+      "aliases": ["干扰", "上行干扰"],
+      "definition": "上行或下行方向受外部或系统内干扰导致信噪比恶化的问题。",
+      "owner": "网优组"
+    },
+    {
+      "term": "业务信道过载",
+      "canonical": "业务信道过载",
+      "aliases": ["业务信道拥塞"],
+      "definition": "承载用户数据的信道资源不足或被占满，导致速率下降与时延抬升。",
+      "owner": "网优组"
+    },
+    {
+      "term": "控制信道过载",
+      "canonical": "控制信道过载",
+      "aliases": ["控制信道拥塞"],
+      "definition": "承载信令的信道资源不足，导致接入慢、切换失败等问题。",
+      "owner": "网优组"
+    },
+    {
+      "term": "CDR",
+      "canonical": "话单",
+      "aliases": ["Call Detail Record", "话单数据"],
+      "definition": "记录用户业务过程的明细数据，是质差定位的主要数据来源之一。",
+      "owner": "数据平台组"
+    },
+    {
+      "term": "DT",
+      "canonical": "路测",
+      "aliases": ["Drive Test", "路测数据"],
+      "definition": "通过测试终端沿路线移动采集的网络与业务质量数据，用于覆盖与移动性验证。",
+      "owner": "网优组"
+    },
+    {
+      "term": "PoC",
+      "canonical": "试点局点",
+      "aliases": ["试点", "Proof of Concept", "PoC 局点"],
+      "definition": "在真实网络中选取的少量局点，用于验证方案可行性与验收指标。",
+      "owner": "交付部"
+    },
+    {
+      "term": "版本冻结",
+      "canonical": "版本冻结",
+      "aliases": ["Code Freeze", "代码冻结"],
+      "definition": "到达约定时间点后停止合入新特性，只允许修复缺陷的版本管理动作。",
+      "owner": "研发部"
+    },
+    {
+      "term": "灰度发布",
+      "canonical": "灰度发布",
+      "aliases": ["灰度", "金丝雀发布"],
+      "definition": "先在小比例流量或少量局点上线，验证稳定后再全量的发布方式。",
+      "owner": "研发部"
+    },
+    {
+      "term": "交付基线",
+      "canonical": "交付基线",
+      "aliases": ["基线", "baseline"],
+      "definition": "对外交付时固化的模型、数据与配置版本组合，后续变更需走基线变更流程。",
+      "owner": "交付部"
+    },
+    {
+      "term": "网优",
+      "canonical": "网络优化",
+      "aliases": ["网络优化"],
+      "definition": "通过参数调整、天馈整改、容量扩容等手段提升网络质量与用户感知的工作。",
+      "owner": "网优组"
+    },
+    {
+      "term": "质差原因体系",
+      "canonical": "质差原因体系",
+      "aliases": ["原因分类体系", "六大类原因"],
+      "definition": "本项目统一的质差原因分类：上下行干扰、弱覆盖、业务信道过载、控制信道过载等，用于标注与评测对齐。",
+      "owner": "无线算法组"
+    }
+  ]
+}

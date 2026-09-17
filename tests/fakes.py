@@ -106,6 +106,26 @@ class FakeLLM:
         return dict(DEMO_INSIGHT)
 
 
+class FakeAnswerLLM:
+    """假 LLM（``chat`` 接口）：返回固定的答案文本，并记录收到的 prompt。
+
+    用于 RAG 问答测试——要断言的是「prompt 里有没有术语约束 / 参考资料编号」，
+    而不是模型生成质量。
+    """
+
+    def __init__(self, answer: str = "根据资料，规则如下 [1]") -> None:
+        self.answer = answer
+        self.calls: list[dict[str, Any]] = []
+
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
+
+    async def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return self.answer
+
+
 class FakeTargetClient:
     """计数型的 Jira / 飞书假客户端。
 
