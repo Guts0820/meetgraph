@@ -1,0 +1,21 @@
+{
+  "_comment": "人工标注的待办清单，用于 scripts/evaluate.py 计算抽取准确率。keywords 为命中该条任务所需的任务描述关键词（命中任意一个即算任务部分匹配）。",
+  "meeting_id": "q3-budget-review",
+  "action_items": [
+    {
+      "assignee": "李明",
+      "keywords": ["预算方案", "预算"],
+      "deadline_hint": "下周五"
+    },
+    {
+      "assignee": "王芳",
+      "keywords": ["JD", "招聘"],
+      "deadline_hint": "本周三"
+    },
+    {
+      "assignee": "赵伟",
+      "keywords": ["服务器", "采购"],
+      "deadline_hint": "下周一"
+    }
+  ]
+}

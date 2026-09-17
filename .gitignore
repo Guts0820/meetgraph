@@ -1,0 +1,45 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+*.whl
+
+# 运行时产物
+reports/
+data/
+logs/
+*.log
+
+# 模型权重（只忽略仓库根目录的 models/，避免误伤 src/models/ 源码包）
+*.bin
+*.pt
+*.onnx
+/models/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml

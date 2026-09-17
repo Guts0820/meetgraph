@@ -1,0 +1,12 @@
+{
+  "张总": {
+    "account": "zhang.zong",
+    "aliases": ["张总（主持人）", "Zhang"]
+  },
+  "李明": {
+    "account": "li.ming",
+    "aliases": ["李工"]
+  },
+  "王芳": "wang.fang",
+  "赵伟": "zhao.wei"
+}

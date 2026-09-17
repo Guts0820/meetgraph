@@ -1,0 +1,25 @@
+services:
+  meetgraph:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+      - REPORTS_DIR=/app/reports
+      - SYNC_LEDGER_DB=/app/data/sync-ledger.db
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./reports:/app/reports
+      - ./data:/app/data
+    restart: unless-stopped
+
+# 说明：当前版本不依赖外部数据库 —— 会议结果保存在进程内存，同步幂等台账用
+# SQLite 落盘。PostgreSQL / Redis 只在需要多实例横向扩展时才有意义，见
+# README 的「已知限制与路线图」。装 WhisperX 镜像较大，如需镜像瘦身可参考
+# Dockerfile 中的注释按需裁剪语音依赖。

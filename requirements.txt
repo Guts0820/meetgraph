@@ -1,0 +1,33 @@
+# MeetGraph 智能会议助手 —— Python 依赖
+# 安装: pip install -r requirements.txt
+
+# === 编排与 LLM ===
+langgraph>=0.2.0
+httpx>=0.27.0
+tenacity>=9.0.0
+pydantic>=2.9.0
+
+# === 语音转写（本地模型；不装则自动走内置演示转写） ===
+whisperx>=3.1.0
+faster-whisper>=1.0.0
+pyannote.audio>=3.3.0
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# === Web 服务 ===
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+websockets>=13.0
+python-multipart>=0.0.12
+
+# === 外部集成 ===
+jira>=3.8.0
+
+# === 工具 ===
+python-dotenv>=1.0.0
+loguru>=0.7.0
+
+# === 测试与评测 ===
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
