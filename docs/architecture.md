@@ -152,3 +152,48 @@ config/glossary.json    ─┘                                          ├─�
 ### 8.3 为什么扩展词走独立通道
 
 第一版把「原查询 + 术语标准名/别名」拼成一个查询去检索，实测 Recall@1 反而从 0.625 掉到 0.417：扩展词稀释了原查询的语义中心，术语表 chunk 还靠术语密度抢占首位。现在向量通道永远只用原查询，扩展只作为**独立低权重通道**参与 RRF，术语表 chunk 在查询不含术语时降权 0.6。完整消融数据见 [evaluation.md](evaluation.md#五rag-检索评测scriptssevaluate_ragpy)。
+
+## 9. 工具协议与自主工具调用（MCP）
+
+### 9.1 模块与数据流
+
+```
+MCP 客户端（Claude Desktop / Cursor / 自研）
+        │  stdio: 换行分隔 JSON-RPC     │  HTTP: POST /mcp   或  GET /mcp/sse + POST /mcp/messages
+        ▼                                ▼
+   mcp/server.py  ── 方法分发 ──► mcp/registry.py ──► mcp/tools.py ──► 既有能力
+   （initialize / tools / resources / prompts / ping）      │            ├ rag/retriever.py
+                                                          │            ├ reports/*.md
+   mcp/policy.py   只读默认、写工具需授权、白名单            │            ├ integrations/{jira,feishu,idempotency}
+   mcp/audit.py    每次调用一行 JSONL（参数摘要）            │            └ config/glossary.json
+                                                          └── llm_catalog() ──► agents/tool_agent.py（ReAct）
+```
+
+| 文件 | 职责 |
+|------|------|
+| `mcp/protocol.py` | JSON-RPC 2.0 报文解析/编码、错误码、协议版本协商 |
+| `mcp/registry.py` | `ToolSpec` 注册表、JSON Schema 参数校验、调用与计时 |
+| `mcp/policy.py` | 权限策略：只读默认、写工具开关、白名单 |
+| `mcp/audit.py` | 审计日志（JSONL，只记参数 SHA-256 摘要） |
+| `mcp/tools.py` | 四个业务工具 |
+| `mcp/catalog.py` | Resources（会议报告）与 Prompts（`summarize_meeting`） |
+| `mcp/server.py` | 方法分发 + stdio 传输（`python -m src.mcp.server`） |
+| `mcp/client.py` | 最小客户端（进程内 + 子进程 stdio），测试与评测用 |
+| `agents/tool_agent.py` | 自主工具调用循环（非确定性编排） |
+
+### 9.2 两种编排的边界
+
+主流水线是**确定性编排**：节点与边写死在 `meeting_graph.py`，可预测、可测试、适合「每场会议都要做同样几件事」。工具调用循环是**非确定性编排**：走几步、调什么由模型决定，适合「用户随口一问」。两者共用同一批底层能力与同一份工具定义，但**不互相调用**——把非确定性循环塞进状态图会让主流水线的行为不可复现。
+
+### 9.3 状态与副作用
+
+- MCP 层**不写** `MeetingState`：工具只读既有产物（索引、报告文件、术语表、台账），写操作仅限「建单」，且复用 `SyncLedger` 幂等键，重复调用返回已有外部 ID；
+- 会话状态（SSE session → queue）只在进程内，属接入层状态，不进入业务状态模型。
+
+### 9.4 失败与熔断
+
+| 层 | 失败行为 |
+|----|---------|
+| 协议层 | 解析失败 `-32700`、未知方法 `-32601`、参数非法 `-32602`、内部错误 `-32603`；**工具执行失败走 `isError` 而不是 JSON-RPC 错误**（协议层说「调用姿势对不对」，结果层说「工具成没成」） |
+| 工具层 | 参数校验先于执行；异常统一捕获为 `isError` 并写审计；错误信息不回显服务器路径 |
+| 循环层 | 最大步数 / 单次超时 / 相同 `(tool, args)` 重复熔断 / 连续失败上限；熔断后回落成总结，不返回假答案 |

@@ -23,6 +23,7 @@ env/
 reports/
 data/sync-ledger.db
 data/index/
+data/mcp-audit.jsonl
 logs/
 *.log
 

@@ -1,0 +1,12 @@
+{"id": "t01", "category": "search", "request": "上次会议里谁负责整理Q3预算方案？", "expected_tools": ["search_meetings"], "expected_args": {"query": "Q3预算方案"}}
+{"id": "t02", "category": "glossary", "request": "DT 这个缩写在公司文档里是什么意思？", "expected_tools": ["lookup_glossary"], "expected_args": {"term": "DT"}}
+{"id": "t03", "category": "glossary", "request": "KQI 和 KPI 的区别是什么？", "expected_tools": ["lookup_glossary"], "expected_args": {"term": "KQI"}}
+{"id": "t04", "category": "report", "request": "读取会议 m-1 的报告原文。", "expected_tools": ["get_meeting_report"], "expected_args": {"meeting_id": "m-1"}}
+{"id": "t05", "category": "search", "request": "版本冻结是哪次会议决定的，冻结之后还能改什么？", "expected_tools": ["search_meetings"], "expected_args": {"query": "版本冻结"}}
+{"id": "t06", "category": "search", "request": "试点局点选了几个，场景怎么分布？", "expected_tools": ["search_meetings"], "expected_args": {"query": "试点局点"}}
+{"id": "t07", "category": "write", "request": "帮我给李明建一条待办：整理Q3预算方案，2026-09-30 前完成，优先级高。", "expected_tools": ["create_action_item"], "expected_args": {"task_assignee": "李明", "deadline": "2026-09-30"}}
+{"id": "t08", "category": "write", "request": "给赵伟建待办：2026-09-25 前提交回滚脚本。", "expected_tools": ["create_action_item"], "expected_args": {"task_assignee": "赵伟", "deadline": "2026-09-25"}}
+{"id": "t09", "category": "glossary", "request": "MRD 里写的方案设计评审时间是什么时候？", "expected_tools": ["lookup_glossary", "search_meetings"], "expected_args": {"term": "MRD"}}
+{"id": "t10", "category": "search", "request": "路测数据的接入频率是哪次会议调整的，改成什么了？", "expected_tools": ["search_meetings"], "expected_args": {"query": "路测"}}
+{"id": "t11", "category": "report", "request": "会议 m-2 的待办事项有哪些？", "expected_tools": ["get_meeting_report"], "expected_args": {"meeting_id": "m-2"}}
+{"id": "t12", "category": "unsupported", "request": "删除 m-1 会议的全部待办。", "expected_tools": [], "expected_args": {}}

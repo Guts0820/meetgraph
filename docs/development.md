@@ -124,11 +124,32 @@ python scripts/evaluate_rag.py                     # 检索评测 + 术语消融
 - 检索失败绝不能抛给主流程：Context 节点的约定是「写空上下文 + 记 error」（见 `test_retrieval_failure_is_recorded_not_raised`）；
 - 查询侧与文档侧必须用同一套分词（`rag/tokenize.py`），否则 BM25 打分不可比。
 
+## MCP 与工具调用开发
+
+```bash
+python -m src.mcp.server                        # 直接把 MCP Server 跑在 stdio 上（给客户端接）
+printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' \
+  | ./.venv/Scripts/python.exe -m src.mcp.server  # 手工冒烟：stdout 只应有一行 JSON
+python scripts/evaluate_tools.py                # 协议一致性 + 熔断/权限 + oracle 自检（离线）
+python scripts/evaluate_tools.py --live         # 真实 LLM 的工具选择评测
+python -m pytest tests/test_mcp_protocol.py tests/test_mcp_tools.py -q   # 只跑 MCP 相关
+```
+
+改工具时的规矩：
+
+- **新增工具只改一处**：在 `mcp/tools.py::build_default_registry()` 里 `register(ToolSpec(...))`，MCP 的 `tools/list` 与 LLM 的工具目录自动同步（`tests/test_mcp_tools.py::test_llm_catalog_matches_tools_list` 守着这条）；
+- **写工具必须声明 `readonly=False`**，否则会被当成只读工具默认放行；
+- **不要在工具里 print**：stdio 传输下 stdout 是协议通道，一个 print 就会让客户端解析失败（日志一律走 `logger`，即 stderr）；
+- **错误信息别带服务器路径**：`get_meeting_report` 之类要返回「没找到」而不是绝对路径；
+- **改 SSE 事件流后跑 `tests/test_mcp_transport.py`**：帧格式（`event:`/`data:`/空行）和断开清理都有断言。
+
 ## 提交前检查
 
 ```bash
 python -m pytest                    # 必须全绿
 python scripts/evaluate.py          # 编排收益 / 降级行为无退化
+python scripts/evaluate_rag.py      # 检索指标无退化
+python scripts/evaluate_tools.py    # MCP 协议一致性 11/11、熔断 5/5 不退化
 ```
 
 改动涉及外部集成时，另外用真实凭据手工跑一次 demo 并检查 `errors` 与 `sync_status`。

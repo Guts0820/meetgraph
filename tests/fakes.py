@@ -126,6 +126,32 @@ class FakeAnswerLLM:
         return self.answer
 
 
+class FakeToolLLM:
+    """按队列返回决策的假 LLM（用于自主工具调用循环测试）。
+
+    ``decisions`` 里每个元素会被依次返回；用完后重复返回最后一个，便于构造
+    「一直调用同一工具」这类死循环场景。
+    """
+
+    def __init__(self, decisions: list[Any], fail_from: int | None = None) -> None:
+        self.decisions = list(decisions)
+        self.fail_from = fail_from
+        self.calls: list[dict[str, Any]] = []
+
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
+
+    async def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> Any:
+        index = len(self.calls)
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        if self.fail_from is not None and index >= self.fail_from:
+            raise RuntimeError("FakeToolLLM: simulated LLM outage")
+        if not self.decisions:
+            return {"final_answer": "无决策"}
+        return self.decisions[min(index, len(self.decisions) - 1)]
+
+
 class FakeTargetClient:
     """计数型的 Jira / 飞书假客户端。
 

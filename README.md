@@ -42,7 +42,10 @@
 | **引用可核验率** | **1.000** | 返回的引用全部能在索引里定位到原文 | 同上 |
 | **术语层增益（无向量模型时）** | Recall@1 **+4.1pt**（向量通道 +8.4pt） | 关掉语义通道后术语扩展的作用；有语义模型时增益被掩盖 | 同上（自动跑的消融矩阵） |
 | 答案级术语一致性（真实 LLM） | 0.625 vs 0.500 | 术语定义注入 prompt 前后，答案使用公司标准术语的比例 | `--live` |
-| 单元测试 | 125 passed | 不联网、不写外部系统、不加载向量模型 | `python -m pytest` |
+| **MCP 协议一致性** | **11/11 项** | 真实子进程 stdio：握手 → 工具发现 → 调用 → 权限拒绝 → 资源/提示 → 错误码 → ping | `python scripts/evaluate_tools.py` |
+| **工具调用熔断与权限** | **5/5 项** | 重复调用 / 步数上限 / 连续失败 / 参数非法自修复 / 审计覆盖 | 同上 |
+| **工具选择准确率（真实 LLM）** | 首个工具 **0.889**（只读任务，9 条）/ 0.727（全部 12 条） | MiniMax `abab6.5s-chat` 自主决定调哪个工具；集合召回 0.773、参数正确 0.727 | `python scripts/evaluate_tools.py --live` |
+| 单元测试 | 195 passed | 不联网、不写外部系统、不加载向量模型 • 含真实子进程跑 MCP stdio 传输 | `python -m pytest` |
 
 > **口径说明**：待办抽取样本仅 3 条、知识库问答标注 24 条，都属于链路联调用的最小标注集，只能说明「链路与评分可用」，不是模型能力的结论；报告与幂等相关的断言有测试覆盖，可信度更高。**术语层在语义通道存在时几乎没有检索增益（实测 ≈0）**——这个负结果与原因分析都记录在 [docs/evaluation.md](docs/evaluation.md)，没有粉饰。
 
@@ -123,22 +126,48 @@ python scripts/evaluate_rag.py --live     # 追加真实 LLM 的答案级评测
 
 换成本公司的语料不需要改代码：把文档放进 `data/knowledge/`（或设 `RAG_CORPUS_DIRS`），术语写进 `config/glossary.json`，重建索引即可。向量后端可插拔：默认本地 `BAAI/bge-small-zh-v1.5`（约 95MB，无 GPU 也能跑），也支持 OpenAI 兼容的 embeddings 接口；模型不可用时自动降级为 BM25 + 术语扩展（离线哈希向量），服务照常可用。
 
+### 5. 工具协议与自主工具调用（MCP）
+
+RAG 解决「查得到」，MCP 解决「**别的客户端也能用、模型能自己决定怎么用**」。
+
+`src/mcp/` 是自己实现的 MCP Server（JSON-RPC 2.0，不引官方 SDK），把四个能力暴露成标准工具：
+
+| 工具 | 只读 | 复用模块 |
+|------|------|----------|
+| `search_meetings` | ✅ | `src/rag/retriever.py`（只要会议纪要来源） |
+| `get_meeting_report` | ✅ | `reports/meeting-report-<id>.md` |
+| `create_action_item` | ❌ | `SyncLedger` 幂等键 + Jira/飞书 |
+| `lookup_glossary` | ✅ | `config/glossary.json` |
+
+协议层实现 `initialize`（版本协商 + 能力声明）/ `tools/list` / `tools/call` / `resources/*` / `prompts/*` / `ping`，传输支持 **stdio**（`python -m src.mcp.server`，Claude Desktop / Cursor 直接接）与 **HTTP + SSE**（`GET /mcp/sse` + `POST /mcp/messages`，另有 `POST /mcp` 简化直返）。
+
+**一份工具定义，两处消费**：`ToolSpec`（名称/描述/JSON Schema/只读标记）既是 `tools/list` 的返回，也是喂给 LLM 的工具目录——避免「MCP 暴露了但模型不知道」这类漂移。
+
+安全姿态是最小权限 + 可审计：写工具默认关闭（`MCP_ALLOW_WRITE=1` 才出现，注意是**不出现**而不是调了再拒），支持白名单，每次调用落一行 JSONL 审计（只记参数摘要 SHA-256，不记明文）。
+
+`src/agents/tool_agent.py` 是自主工具调用循环（ReAct 风格）：模型每步回一段严格 JSON（`{"action": …}` 或 `{"final_answer": …}`），循环层负责参数校验、把工具报错回传给模型自修复、以及四种熔断——重复调用、步数上限、连续失败、LLM 自身报错。熔断后回落成「已查到什么」的总结，不返回假答案。
+
+接入配置、协议细节与设计取舍见 [docs/mcp.md](docs/mcp.md)。
+
 ---
 
 ## 架构
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ 接入层   REST(FastAPI) / WebSocket(实时音频流)         │
+│ 接入层   REST(FastAPI) / WebSocket / MCP(stdio+SSE)    │
 ├──────────────────────────────────────────────────────┤
 │ 编排层   LangGraph StateGraph：Pipeline + Fan-out/Fan-in │
+│          + 自主工具调用循环（ReAct，非确定性编排）        │
 ├──────────────────────────────────────────────────────┤
-│ Agent层  Transcription / Summary / Action / Insight /  │
-│          Follow-up                                    │
+│ Agent层  Transcription / Context(RAG) / Summary /      │
+│          Action / Insight / Follow-up                 │
 ├──────────────────────────────────────────────────────┤
 │ 集成层   MiniMax LLM / WhisperX+pyannote / Jira / 飞书  │
+│          / MCP 工具注册表（权限 + 审计）                 │
 ├──────────────────────────────────────────────────────┤
 │ 数据层   内存会议结果 / SQLite 同步台账 / Markdown 报告   │
+│          / RAG 索引 / MCP 审计日志(JSONL)               │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -159,16 +188,20 @@ MeetingState = {
 ```
 meetgraph/
 ├── src/
-│   ├── agents/          # 5 个 Agent（transcription / summary / action / insight / followup）
+│   ├── agents/          # 6 个节点（transcription / context(RAG) / summary / action / insight / followup）
+│   │                    # + tool_agent.py 自主工具调用循环
 │   ├── graph/           # LangGraph 编排与主入口 run_meeting_pipeline
 │   ├── integrations/    # LLM、Jira、飞书、幂等台账
+│   ├── mcp/             # MCP Server：协议内核 / 工具注册表 / 权限 / 审计 / 客户端
 │   ├── models/          # pydantic 数据契约
-│   ├── websocket/       # FastAPI 应用（REST + WebSocket + 健康检查）
+│   ├── rag/             # 分块、BM25、向量、术语、精排、检索、问答
+│   ├── websocket/       # FastAPI 应用（REST + WebSocket + MCP HTTP/SSE + 健康检查）
 │   └── main.py          # 服务入口
-├── config/jira_users.json   # 显示名 → Jira 账号映射
-├── docs/                # 架构 / 接口 / 开发 / 评测文档
-├── scripts/evaluate.py  # 评测脚本
-├── tests/               # pytest（58 个用例，含假 LLM 与假外部系统）
+├── config/              # jira_users.json（人员映射）/ glossary.json（术语表）
+├── data/                # knowledge/（内部文档）、meetings/（历史纪要）、index/（索引）
+├── docs/                # 架构 / 接口 / 开发 / 评测 / MCP / 实施计划
+├── scripts/             # evaluate.py、evaluate_rag.py、evaluate_tools.py、rag_cli.py
+├── tests/               # pytest（195 个用例，含假 LLM 与假外部系统）
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
@@ -229,8 +262,12 @@ docker compose up -d
 | POST | `/api/v1/meeting/{id}/upload` | 上传音频文件并处理 |
 | GET | `/api/v1/meeting/{id}/{transcript\|summary\|actions\|insights\|report}` | 查询结果 |
 | WS | `/ws/meeting/{id}` | 实时音频流：发送二进制帧，`{"type":"stop"}` 触发处理 |
+| POST | `/mcp` | MCP 协议直返（JSON-RPC，一次请求一次响应） |
+| GET | `/mcp/sse` | MCP SSE 传输：下发投递端点，响应经事件流回推 |
+| POST | `/mcp/messages?session_id=` | MCP SSE 传输的请求入口 |
+| GET | `/mcp/info` | 已暴露的工具、只读/写标记与当前策略（排障用） |
 
-完整字段说明见 [docs/api-reference.md](docs/api-reference.md)。
+完整字段说明见 [docs/api-reference.md](docs/api-reference.md)，MCP 协议细节见 [docs/mcp.md](docs/mcp.md)。
 
 ---
 
@@ -247,6 +284,10 @@ docker compose up -d
 | `RAG_EMBEDDER` | 向量后端：`auto`（默认，先试本地 BGE）/ `hash`（离线）/ `openai` | 模型不可用时自动降级为离线哈希向量（主要靠 BM25） |
 | `RAG_INDEX_DIR` / `RAG_CORPUS_DIRS` / `RAG_GLOSSARY` | 索引目录 / 语料目录（逗号分隔）/ 术语表路径 | 分别用 `data/index`、`data/knowledge`+`data/meetings`、`config/glossary.json` |
 | `RAG_HF_MIRROR` | 设为 `0` 可关闭 HF 镜像自动切换（默认走 `hf-mirror.com`） | — |
+| `MCP_ALLOW_WRITE` | 设为 `1` 才把写工具（`create_action_item`）暴露给 MCP 客户端与 LLM | 写工具不出现在工具列表里（不是调了再拒） |
+| `MCP_TOOL_ALLOWLIST` | 逗号分隔的工具白名单，进一步收窄可调用范围 | 不额外限制（仍受只读/写规则约束） |
+| `MCP_AUDIT_LOG` | 工具调用审计日志路径（JSONL，只记参数摘要） | 落在仓库 `data/mcp-audit.jsonl` |
+| `MCP_AGENT_MAX_STEPS` / `MCP_AGENT_TOOL_TIMEOUT` | 自主工具调用循环的最大步数 / 单次工具超时（秒） | 默认 5 步 / 20 秒 |
 
 人员映射文件支持别名，减少「张总 / 张总（主持人）」被拆成两个人的概率：
 
@@ -262,15 +303,17 @@ docker compose up -d
 ## 测试与评测
 
 ```bash
-python -m pytest                      # 125 个用例：不联网、不写真实 Jira/飞书、不加载向量模型
+python -m pytest                      # 195 个用例：不联网、不写真实 Jira/飞书、不加载向量模型
 python -m pytest --cov=src            # 覆盖率
 python scripts/evaluate.py            # 会议流水线评测（编排收益 / 降级行为）
 python scripts/evaluate.py --live     # 追加真实 LLM 的抽取质量评测
 python scripts/evaluate_rag.py        # RAG 检索评测（Recall@K / MRR / 术语消融 / 引用可核验）
 python scripts/evaluate_rag.py --live # 追加真实 LLM 的答案级评测
+python scripts/evaluate_tools.py      # MCP 协议一致性 + 熔断/权限 + oracle 自检
+python scripts/evaluate_tools.py --live  # 真实 LLM 的工具选择评测
 ```
 
-测试策略：外部世界全部替换成假实现（`tests/fakes.py` 的 `FakeLLM / FakeJiraClient / FakeFeishuClient`），但 Agent、Graph、报告落盘这些被测逻辑一律走真实代码路径；`FakeLLM` 可注入延迟与失败，因此「并行收益」和「降级行为」都是可断言的。
+测试策略：外部世界全部替换成假实现（`tests/fakes.py` 的 `FakeLLM / FakeJiraClient / FakeFeishuClient`），但 Agent、Graph、报告落盘这些被测逻辑一律走真实代码路径；`FakeLLM` 可注入延迟与失败，因此「并行收益」和「降级行为」都是可断言的。MCP 那条路径更进一步：**真的把 Server 作为子进程拉起来**跑一遍 stdio 握手与工具调用，因为「客户端能接上」这件事没法靠单测内部函数证明。
 
 指标定义、计算口径与已知偏差见 [docs/evaluation.md](docs/evaluation.md)。
 
@@ -289,6 +332,11 @@ python scripts/evaluate_rag.py --live # 追加真实 LLM 的答案级评测
 - **知识库语料是示例数据**：`data/knowledge`、`data/meetings` 是构造的示例（与项目业务场景一致），换成真实内部文档无需改代码，但当前数字只代表这套示例语料上的表现。
 - **术语层的增益有前提**：语义通道存在时术语扩展几乎不带来检索增益（实测 ≈0），它的价值在无向量模型的降级路径与生成侧的术语一致性；详见 docs/evaluation.md 的负结果记录。
 - **精排是确定性特征，不是 Cross-Encoder**：没有引入 reranker 模型（体积与推理成本），进一步优化空间在 `src/rag/rerank.py` 的权重与特征上。
+- **MCP 是自己实现的，不是官方 SDK**：好处是能讲清版本协商/传输/错误码且测试不联网，代价是未来要接远端 Server 时客户端侧仍需引 SDK。
+- **工具调用用 JSON 协议而非原生 `tool_calls`**：当前 LLM 客户端（MiniMax `chatcompletion_v2`）不返回原生 tool_calls，用严格 JSON 复刻同等效果；模型偶尔输出非 JSON 时靠解析容错兜底。
+- **MCP 会话表在进程内**：`_mcp_sessions` 是 dict，多实例部署时 SSE 会话不跨实例，需要换 Redis；stdio 传输不受影响。
+- **工具选择评测样本只有 12 条**：只读任务 9 条上的首个工具准确率 0.889 属于小样本观察，不能当模型能力结论；写任务在评测时被策略隐藏（避免真的建单），因此只测「是否尝试调用写工具」。
+- **SSE 的 HTTP 集成测试缺位**：`httpx.ASGITransport` 在流未关闭时不支持并发请求，改成直接单测事件流生成器（帧格式/心跳/断开清理），HTTP 层覆盖 `POST /mcp` 与会话投递——补这块需要真实网络客户端。
 
 ---
 

@@ -73,6 +73,20 @@ def load_user_mapping(path: str | Path | None = None) -> dict[str, str]:
     return mapping
 
 
+def map_priority(priority: str) -> str:
+    """系统优先级 → Jira 优先级。
+
+    做成模块级函数，调用方不必为了映射一个字符串而依赖客户端类。
+    """
+    mapping = {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "urgent": "Highest",
+    }
+    return mapping.get(str(priority).lower(), "Medium")
+
+
 class JiraClient:
     """
     Jira Cloud REST API 客户端
@@ -211,11 +225,5 @@ class JiraClient:
 
     @staticmethod
     def map_priority(priority: str) -> str:
-        """将系统优先级映射为 Jira 优先级"""
-        mapping = {
-            "low": "Low",
-            "medium": "Medium",
-            "high": "High",
-            "urgent": "Highest",
-        }
-        return mapping.get(priority.lower(), "Medium")
+        """将系统优先级映射为 Jira 优先级（模块级函数的别名，保留兼容）。"""
+        return map_priority(priority)

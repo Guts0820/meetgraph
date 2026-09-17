@@ -15,8 +15,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -290,6 +291,135 @@ async def reindex_knowledge() -> dict:
 
     stats = await asyncio.to_thread(reindex)
     return {"status": "ok", **stats}
+
+
+# ============================================================
+# MCP over HTTP
+# ============================================================
+# 两种形态：
+# 1. POST /mcp —— 一次请求一次响应（Streamable HTTP 的简化形态，客户端最省事）；
+# 2. GET /mcp/sse + POST /mcp/messages —— 传统 SSE 传输：先开事件流拿到
+#    session_id 与投递端点，再 POST 请求，响应从事件流里推回来。
+# stdio 传输见 `python -m src.mcp.server`。
+
+_mcp_server = None
+_mcp_sessions: dict[str, asyncio.Queue] = {}
+SSE_KEEPALIVE_SECONDS = 15.0
+
+
+def sse_frame(event: str | None, data: str) -> str:
+    """SSE 帧：``event:`` 行可选，``data:`` 行必需，空行结尾。"""
+    prefix = f"event: {event}\n" if event else ""
+    return f"{prefix}data: {data}\n\n"
+
+
+async def sse_event_stream(
+    session_id: str,
+    queue: "asyncio.Queue[dict]",
+    is_disconnected,
+    keepalive: float = SSE_KEEPALIVE_SECONDS,
+):
+    """SSE 事件流：先下发投递端点，之后把响应帧推进流里。
+
+    独立成生成器（而不是塞在路由闭包里）是为了能直接单测帧格式、心跳与清理
+    —— 流式响应的集成测试很依赖客户端实现，而这个函数本身是纯逻辑。
+    """
+    try:
+        yield sse_frame("endpoint", f"/mcp/messages?session_id={session_id}")
+        while True:
+            if await is_disconnected():
+                logger.info(f"[MCP] SSE client disconnected: {session_id}")
+                break
+            try:
+                response = await asyncio.wait_for(queue.get(), timeout=keepalive)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"  # 心跳，防止中间层掐连接
+                continue
+            yield sse_frame("message", json.dumps(response, ensure_ascii=False))
+    finally:
+        _mcp_sessions.pop(session_id, None)
+        logger.info(f"[MCP] SSE session closed: {session_id}")
+
+
+def _get_mcp_server():
+    """进程内单例：MCP Server 的工具注册表与审计日志只建一次。"""
+    global _mcp_server
+    if _mcp_server is None:
+        from ..mcp.server import McpServer
+
+        _mcp_server = McpServer()
+        logger.info("[MCP] server initialised for HTTP transport")
+    return _mcp_server
+
+
+@app.post("/mcp")
+async def mcp_http(request: Request) -> Response:
+    """MCP 请求/响应直返（通知类报文返回 202）。"""
+    payload = await request.json()
+    response = await _get_mcp_server().handle(payload)
+    if response is None:
+        return Response(
+            status_code=202, content='{"status":"accepted"}', media_type="application/json"
+        )
+    return JSONResponse(response)
+
+
+@app.get("/mcp/sse")
+async def mcp_sse(request: Request) -> StreamingResponse:
+    """MCP SSE 传输：先下发投递端点，随后把响应推进事件流。
+
+    每个心跳周期检查一次客户端是否断开——否则断开的会话会永远留在
+    ``_mcp_sessions`` 里（长连接服务的经典泄漏点）。事件流逻辑见
+    :func:`sse_event_stream`。
+    """
+    session_id = uuid.uuid4().hex[:12]
+    queue: asyncio.Queue = asyncio.Queue()
+    _mcp_sessions[session_id] = queue
+    logger.info(f"[MCP] SSE session opened: {session_id}")
+
+    return StreamingResponse(
+        sse_event_stream(session_id, queue, request.is_disconnected),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/mcp/messages")
+async def mcp_messages(session_id: str, request: Request) -> Response:
+    """SSE 传输的请求入口：处理完把响应推进对应 session 的事件流。"""
+    queue = _mcp_sessions.get(session_id)
+    if queue is None:
+        return JSONResponse(
+            {"error": f"unknown session_id: {session_id}"}, status_code=404
+        )
+
+    payload = await request.json()
+    response = await _get_mcp_server().handle(payload)
+    if response is not None:
+        await queue.put(response)
+    return Response(
+        status_code=202, content='{"status":"accepted"}', media_type="application/json"
+    )
+
+
+@app.get("/mcp/info")
+async def mcp_info() -> dict:
+    """MCP 能力自检：暴露了哪些工具、写操作是否开启、审计日志在哪。"""
+    server = _get_mcp_server()
+    registry = server.registry
+    return {
+        "server": server.info.to_payload(),
+        "protocol_version": server.info.protocol_version,
+        "tools": [
+            {"name": spec.name, "readonly": spec.readonly}
+            for spec in registry._tools.values()  # noqa: SLF001 - 自检要看到全部工具
+        ],
+        "available_tools": [spec.name for spec in registry.list_specs()],
+        "allow_write": registry.policy.allow_write,
+        "allowlist": list(registry.policy.allowlist),
+        "audit_log": str(registry.audit.path),
+        "sessions": len(_mcp_sessions),
+    }
 
 
 @app.post("/api/v1/meeting/start")

@@ -64,6 +64,10 @@ def offline_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Pat
     monkeypatch.setenv("SYNC_LEDGER_DB", str(tmp_path / "sync-ledger.db"))
     # 指向一个不存在的索引目录：默认行为下 RAG 节点自动跳过，测试不依赖向量模型
     monkeypatch.setenv("RAG_INDEX_DIR", str(tmp_path / "no-index"))
+    # MCP：审计日志落临时目录，写工具默认关闭（需要写权限的用例自己开）
+    monkeypatch.setenv("MCP_AUDIT_LOG", str(tmp_path / "mcp-audit.jsonl"))
+    monkeypatch.delenv("MCP_ALLOW_WRITE", raising=False)
+    monkeypatch.delenv("MCP_TOOL_ALLOWLIST", raising=False)
     yield tmp_path
 
 

@@ -81,6 +81,66 @@ POST /api/v1/knowledge/reindex
 
 语料来自 `data/knowledge`、`data/meetings` 与 `config/glossary.json`，构建是 CPU 密集的同步流程，服务端放在线程里执行以免阻塞事件循环。
 
+## MCP 协议接口
+
+MCP（Model Context Protocol）走 JSON-RPC 2.0，stdout 是协议通道（stdio 传输下不要往里 print 任何东西）。协议细节见 [mcp.md](mcp.md)。
+
+### 传输
+
+| 方式 | 请求 | 说明 |
+|------|------|------|
+| stdio | `python -m src.mcp.server` | 换行分隔 JSON-RPC，供 Claude Desktop / Cursor 等本地客户端接入 |
+| HTTP 直返 | `POST /mcp` | 一次请求一次响应，适合脚本；通知类消息返回 `202` |
+| SSE | `GET /mcp/sse` → `POST /mcp/messages?session_id=…` | 事件流先下发投递端点，响应经 `event: message` 回推，15s 心跳，断连回收会话 |
+| 检视 | `GET /mcp/info` | 返回已暴露的工具、只读/写标记与当前策略 |
+
+```bash
+curl -s http://localhost:8000/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+curl -s http://localhost:8000/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call",
+       "params":{"name":"lookup_glossary","arguments":{"term":"MRD"}}}'
+```
+
+### 响应格式
+
+`tools/call` 的结果统一包在 `content[]` 里（`type: text`，正文是结果的 JSON 字符串），失败时 `isError: true`：
+
+```json
+{
+  "jsonrpc": "2.0", "id": 2,
+  "result": {
+    "content": [{"type": "text", "text": "{\"query\": \"MRD\", ...}"}],
+    "isError": false
+  }
+}
+```
+
+### 工具一览
+
+| 工具 | 只读 | 参数 | 返回（`text` 里的 JSON 字段） |
+|------|------|------|------------------------------|
+| `search_meetings` | ✅ | `query`（必填）、`top_k`（1~20，默认 5） | `query` / `count` / `results[]`：`citation`、`meeting_id`、`section`、`score`、`text` |
+| `get_meeting_report` | ✅ | `meeting_id`（必填，字符白名单净化）、`max_chars`（默认 6000） | `meeting_id` / `path` / `characters` / `truncated` / `markdown` |
+| `create_action_item` | ❌ 写（需 `MCP_ALLOW_WRITE=1`） | `task`、`task_assignee`（必填）、`meeting_id`（默认 `ad-hoc`）、`deadline`（`YYYY-MM-DD`）、`priority`（`low\|medium\|high\|urgent`） | `duplicate` / `jira_issue_key` / `feishu_task_id` / `targets`：`created\|duplicate\|disabled` |
+| `lookup_glossary` | ✅ | `term`（必填，支持别名与大小写） | `query` / `exact` / `count` / `matches[]`：`term`、`canonical`、`aliases`、`definition`、`owner` |
+
+资源与提示模板：
+
+| 类型 | 名称 | 说明 |
+|------|------|------|
+| resource | `meeting://report/{meeting_id}` | 会议报告原文（Markdown） |
+| prompt | `summarize_meeting` | 参数 `meeting_id`，返回「读报告 → 出结构化纪要」的消息模板 |
+
+### 错误约定
+
+| 场景 | 返回 |
+|------|------|
+| JSON 解析失败 / 非法请求 / 未知方法 / 参数校验失败 / 内部错误 | JSON-RPC 错误：`-32700` / `-32600` / `-32601` / `-32602` / `-32603` |
+| 工具执行失败（报告不存在、术语查不到、外部系统报错） | `result.isError = true`，错误文案在 `content[0].text`，**不抛协议错误** |
+| 写工具未授权 | JSON-RPC 错误 `-32602`，文案提示需要 `MCP_ALLOW_WRITE=1`（且该工具不会出现在 `tools/list` 里） |
+
 ## REST API
 
 ### 创建会议
