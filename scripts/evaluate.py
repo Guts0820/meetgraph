@@ -116,22 +116,47 @@ def score_actions(
 # 实验
 # ----------------------------------------------------------------------
 
-async def experiment_parallel_speedup(tmp_dir: Path) -> dict[str, Any]:
-    """Fan-out 并行 vs 串行 await 的端到端耗时对比。"""
-    parallel_times: list[float] = []
-    for i in range(REPEATS):
-        start = time.perf_counter()
-        await run_meeting_pipeline(
-            f"eval-parallel-{i}",
-            llm_client=FakeLLM(delay=FAKE_LATENCY),
-            jira_client=FakeJiraClient(enabled=False),
-            feishu_client=FakeFeishuClient(enabled=False),
-            ledger=SyncLedger(":memory:"),
-        )
-        parallel_times.append(time.perf_counter() - start)
+def build_analysis_fanout_graph(llm, jira, feishu):
+    """只含三个分析 Agent 的最小状态图：START → [summary, action, insight] → END。
 
+    加速比必须在**同一批工作**上比较。早先的版本拿「完整流水线」比「三个 Agent 串行」，
+    转录/检索/跟进这些串行节点的耗时被算进并行一侧，于是同一条命令会跑出 0.4x
+    （并行比串行还慢三倍）这种自相矛盾的数字——那是指标算错，不是并行没用。
+    """
+    from langgraph.graph import END, START, StateGraph
+
+    from src.graph.meeting_graph import GraphState
+
+    graph = StateGraph(GraphState)
+    graph.add_node("summary", SummaryAgent(llm).process)
+    graph.add_node("action", ActionAgent(llm, jira, feishu).process)
+    graph.add_node("insight", InsightAgent(llm).process)
+    for node in ("summary", "action", "insight"):
+        graph.add_edge(START, node)
+        graph.add_edge(node, END)
+    return graph.compile()
+
+
+async def experiment_parallel_speedup(tmp_dir: Path) -> dict[str, Any]:
+    """同一批三个分析 Agent：LangGraph Fan-out 并行 vs 串行 await。"""
     transcript = TranscriptionAgent._generate_demo_transcript("eval-seq")
     transcript_text = TranscriptionAgent._format_transcript_text(transcript)
+
+    parallel_times: list[float] = []
+    for i in range(REPEATS):
+        compiled = build_analysis_fanout_graph(
+            FakeLLM(delay=FAKE_LATENCY),
+            FakeJiraClient(enabled=False),
+            FakeFeishuClient(enabled=False),
+        )
+        state = {
+            "meeting_id": f"eval-parallel-{i}",
+            "transcript": transcript,
+            "transcript_text": transcript_text,
+        }
+        start = time.perf_counter()
+        await compiled.ainvoke(state)
+        parallel_times.append(time.perf_counter() - start)
 
     sequential_times: list[float] = []
     for i in range(REPEATS):
@@ -153,19 +178,39 @@ async def experiment_parallel_speedup(tmp_dir: Path) -> dict[str, Any]:
         await insight.process(dict(state))
         sequential_times.append(time.perf_counter() - start)
 
+    # 参考值：完整流水线端到端。关闭 RAG 节点，否则向量模型加载（秒级）会淹没编排开销，
+    # 测出来的就不是「图调度有多快」了。
+    pipeline_times: list[float] = []
+    for i in range(REPEATS):
+        start = time.perf_counter()
+        await run_meeting_pipeline(
+            f"eval-pipeline-{i}",
+            llm_client=FakeLLM(delay=FAKE_LATENCY),
+            jira_client=FakeJiraClient(enabled=False),
+            feishu_client=FakeFeishuClient(enabled=False),
+            ledger=SyncLedger(":memory:"),
+            retriever=None,
+        )
+        pipeline_times.append(time.perf_counter() - start)
+
     parallel = statistics.median(parallel_times)
     sequential = statistics.median(sequential_times)
+    pipeline = statistics.median(pipeline_times)
     llm_latency_total = 3 * FAKE_LATENCY
 
     return {
+        "method": "同一批三个分析 Agent：Fan-out 图 vs 串行 await",
         "repeats": REPEATS,
         "llm_calls_per_run": 3,
         "simulated_llm_latency_s": FAKE_LATENCY,
-        "llm_latency_total_s": llm_latency_total,
+        "llm_latency_total_s": round(llm_latency_total, 3),
         "parallel_median_s": round(parallel, 3),
         "sequential_median_s": round(sequential, 3),
         "speedup": round(sequential / parallel, 2) if parallel else 0.0,
+        # 并行路径只付**一次** LLM 延迟（三次调用是并发出去的），所以扣一次而不是三次
         "overhead_parallel_s": round(parallel - FAKE_LATENCY, 3),
+        "pipeline_median_s": round(pipeline, 3),
+        "pipeline_overhead_s": round(pipeline - FAKE_LATENCY, 3),
     }
 
 
@@ -293,10 +338,11 @@ def render(report: dict[str, Any]) -> str:
         "",
         "| 指标 | 数值 | 测量方式 |",
         "|------|------|----------|",
-        f"| 并行编排中位耗时 | {par['parallel_median_s']}s | {par['repeats']} 次 LangGraph Fan-out 端到端 |",
+        f"| 并行编排中位耗时 | {par['parallel_median_s']}s | {par['method']}，{par['repeats']} 次取中位 |",
         f"| 串行基线中位耗时 | {par['sequential_median_s']}s | 同参数下三个 Agent 顺序 await |",
-        f"| 编排加速比 | **{par['speedup']}x** | 串行 / 并行 |",
-        f"| 并行编排固有开销 | {par['overhead_parallel_s']}s | 并行耗时 − 单次 LLM 延迟 |",
+        f"| 编排加速比 | **{par['speedup']}x** | 串行 / 并行（同一批工作） |",
+        f"| 并行编排固有开销 | {par['overhead_parallel_s']}s | 并行耗时 − 单次 LLM 延迟（图调度 + 状态归约） |",
+        f"| 完整流水线端到端 | {par['pipeline_median_s']}s | 三个 Agent 走 Fan-out、含转录/跟进节点、关闭 RAG 节点；扣掉一次 LLM 延迟（{par['simulated_llm_latency_s']}s）后非 LLM 开销 {par['pipeline_overhead_s']}s |",
         f"| 降级完成率 | {deg['completed']}/{deg['runs']} | LLM 全挂时 Pipeline 仍跑完 |",
         f"| 错误可观测率 | {deg['errors_recorded']}/{deg['runs']} | errors 字段如实记录失败 |",
         f"| 报告完整率 | {rep['completeness']:.0%} | 三个章节非空且非占位符 |",
