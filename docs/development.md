@@ -140,7 +140,9 @@ python -m pytest tests/test_mcp_protocol.py tests/test_mcp_tools.py -q   # 只�
 - **新增工具只改一处**：在 `mcp/tools.py::build_default_registry()` 里 `register(ToolSpec(...))`，MCP 的 `tools/list` 与 LLM 的工具目录自动同步（`tests/test_mcp_tools.py::test_llm_catalog_matches_tools_list` 守着这条）；
 - **写工具必须声明 `readonly=False`**，否则会被当成只读工具默认放行；
 - **不要在工具里 print**：stdio 传输下 stdout 是协议通道，一个 print 就会让客户端解析失败（日志一律走 `logger`，即 stderr）；
+- **编码由服务端负责**：`serve_stdio` 会把 stdin/stdout 重配置为 UTF-8。Windows 管道默认 GBK，中文响应会把按 UTF-8 解包的客户端打崩；
 - **错误信息别带服务器路径**：`get_meeting_report` 之类要返回「没找到」而不是绝对路径；
+- **改协议后用第三方客户端复验**：`pip install mcp && python scripts/mcp_interop_check.py`。自研客户端会迁就自研服务端，测不出协议偏差——这个教训已经吃过一次（版本协商 + GBK 编码）；
 - **改 SSE 事件流后跑 `tests/test_mcp_transport.py`**：帧格式（`event:`/`data:`/空行）和断开清理都有断言。
 
 ## 提交前检查

@@ -47,7 +47,7 @@ Cursor ──────────┼── stdio ─►│  protocol.py   JS
 
 | 方法 | 是否响应 | 说明 |
 |------|---------|------|
-| `initialize` | ✅ | 版本协商（客户端版本在支持列表里则回显，否则回服务端版本）+ 能力声明 |
+| `initialize` | ✅ | 版本协商 + 能力声明（客户端版本在支持列表里就回显，否则回服务端最新版） |
 | `notifications/initialized` | ❌ | 客户端就绪通知，按协议不得回复 |
 | `tools/list` | ✅ | 只列出当前策略允许的工具（写工具未授权时直接不出现在列表里） |
 | `tools/call` | ✅ | 返回 `content[]` + `isError`；工具执行失败走 `isError`，**调用方式错误**走 JSON-RPC 错误 |
@@ -57,6 +57,10 @@ Cursor ──────────┼── stdio ─►│  protocol.py   JS
 | 未知方法 | ✅（错误） | `-32601 METHOD_NOT_FOUND` |
 
 错误码：`-32700` 解析失败 / `-32600` 非法请求 / `-32601` 方法不存在 / `-32602` 参数非法 / `-32603` 内部错误。
+
+**支持的协议版本**（从新到旧）：`2026-07-28`、`2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`。客户端给哪个就回哪个；不认识就回最新版，由客户端决定是否继续。**默认值必须是最新版**——这一点曾经踩过坑，见第 9 节。
+
+**stdio 传输的编码**：服务端启动时会把 stdin/stdout 强制重配置为 UTF-8。Windows 下管道默认按 locale 编码（GBK）写，中文响应会让按 UTF-8 解码的客户端直接 `UnicodeDecodeError`——这是官方 SDK 实测出来的 bug，见第 9 节。
 
 ### 传输方式
 
@@ -149,6 +153,7 @@ curl -s http://127.0.0.1:8000/mcp -H 'Content-Type: application/json' \
 ```bash
 python scripts/evaluate_tools.py          # 离线：协议一致性 + 熔断 + oracle 自检
 python scripts/evaluate_tools.py --live   # 真实 LLM 工具选择
+python scripts/mcp_interop_check.py       # 用 Anthropic 官方 mcp SDK 复验互通性（需 pip install mcp）
 ```
 
 ## 8. 实测结果
@@ -158,6 +163,7 @@ python scripts/evaluate_tools.py --live   # 真实 LLM 工具选择
 | 指标 | 数值 |
 |------|------|
 | MCP 协议一致性 | **11/11**（真实子进程 stdio，握手到 ping 0.22s） |
+| 官方 SDK 互通性 | **通过**（Anthropic `mcp` SDK 2.2.0 作为客户端：initialize 协商 2025-11-25 → tools/list 三个只读工具 → tools/call 中文回包 → prompts/list） |
 | 熔断与权限（5 个构造场景） | **5/5** |
 | 首个工具准确率（只读任务 9 条，`abab6.5s-chat`） | **0.889** |
 | 首个工具准确率（全部 12 条） | 0.727 |
@@ -180,6 +186,9 @@ python scripts/evaluate_tools.py --live   # 真实 LLM 工具选择
 
 **已知问题 / 负结果（如实记录）：**
 
-1. **评测指标口径被实测推翻过**：最初用「工具序列完全相等」和「参数精确相等」评分，真实 LLM 拿到 0.182 / 0.364——但翻轨迹发现多数扣分是「多查了一次确认」和「用自己措辞检索」，不是错误。改成集合级召回/精确率 + 结构化参数精确、自由文本非空后才有意义。
-2. **SSE 的 HTTP 集成测试没写成**：`httpx.ASGITransport` 在流未关闭时不支持并发请求，`TestClient` 关闭流又不会取消服务端生成器。改为直接单测事件流生成器（帧格式/心跳/断开清理），HTTP 层只覆盖 `POST /mcp` 与会话投递——**这是测试台架的限制，不是接口没验**。
+1. **「自研客户端能连上」不等于「符合标准」**：一开始只用自研客户端测，全绿；换成 Anthropic 官方 `mcp` SDK 直接用不了，暴露两个真 bug：
+   - **协议版本协商过旧**：只支持 `2024-11-05` / `2025-03-26`，而现代客户端默认 2025-11-25、最高 2026-07-28，谈不拢。修法是把支持列表更新到最新在前，并保持「客户端版本认识就回显、不认识回最新版」的语义。
+   - **stdio 在 Windows 下用 GBK 写 stdout**：管道下 Python 默认走 locale 编码，中文响应被编码成 GBK 字节，官方 SDK 按 UTF-8 解码直接 `UnicodeDecodeError`。而**自研客户端恰好设了 `PYTHONIOENCODING=utf-8`，把缺陷掩盖了**。修法是服务端自己 `reconfigure(encoding="utf-8")`，并加了一条剥掉编码环境变量再断言原始字节的回归测试。
+   - 教训：跨实现验证（第三方客户端）比自研双端互相迁就强得多；`scripts/mcp_interop_check.py` 就是为此留的。
+2. **SSE 的 HTTP 集成测试缺位**：`httpx.ASGITransport` 在流未关闭时不支持并发请求，`TestClient` 关闭流又不会取消服务端生成器。改为直接单测事件流生成器（帧格式/心跳/断开清理），HTTP 层只覆盖 `POST /mcp` 与会话投递——**这是测试台架的限制，不是接口没验**。
 3. **评测时写工具被隐藏**：`--live` 不带 `MCP_ALLOW_WRITE`，避免评测脚本在真实 Jira/飞书里建单。因此写任务只统计「模型是否尝试调用写工具」，不测真实建单质量（幂等与建单本身由单测覆盖）。

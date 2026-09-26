@@ -43,9 +43,10 @@
 | **术语层增益（无向量模型时）** | Recall@1 **+4.1pt**（向量通道 +8.4pt） | 关掉语义通道后术语扩展的作用；有语义模型时增益被掩盖 | 同上（自动跑的消融矩阵） |
 | 答案级术语一致性（真实 LLM） | 0.625 vs 0.500 | 术语定义注入 prompt 前后，答案使用公司标准术语的比例 | `--live` |
 | **MCP 协议一致性** | **11/11 项** | 真实子进程 stdio：握手 → 工具发现 → 调用 → 权限拒绝 → 资源/提示 → 错误码 → ping | `python scripts/evaluate_tools.py` |
+| **官方 SDK 互通性** | **通过** | Anthropic `mcp` SDK 2.2.0 当客户端连我们的 Server（协商 2025-11-25 → 工具发现 → 中文回包 → 提示模板）；就是这一步暴露了版本协商与 GBK 编码两个真 bug | `python scripts/mcp_interop_check.py` |
 | **工具调用熔断与权限** | **5/5 项** | 重复调用 / 步数上限 / 连续失败 / 参数非法自修复 / 审计覆盖 | 同上 |
 | **工具选择准确率（真实 LLM）** | 首个工具 **0.889**（只读任务，9 条）/ 0.727（全部 12 条） | MiniMax `abab6.5s-chat` 自主决定调哪个工具；集合召回 0.773、参数正确 0.727 | `python scripts/evaluate_tools.py --live` |
-| 单元测试 | 195 passed | 不联网、不写外部系统、不加载向量模型 • 含真实子进程跑 MCP stdio 传输 | `python -m pytest` |
+| 单元测试 | 197 passed | 不联网、不写外部系统、不加载向量模型 • 含真实子进程跑 MCP stdio 传输与 UTF-8 编码回归 | `python -m pytest` |
 
 > **口径说明**：待办抽取样本仅 3 条、知识库问答标注 24 条，都属于链路联调用的最小标注集，只能说明「链路与评分可用」，不是模型能力的结论；报告与幂等相关的断言有测试覆盖，可信度更高。**术语层在语义通道存在时几乎没有检索增益（实测 ≈0）**——这个负结果与原因分析都记录在 [docs/evaluation.md](docs/evaluation.md)，没有粉饰。**加速比的测量口径先后修正过两次**（一次拿完整流水线比三个 Agent、一次扣错了 LLM 延迟次数），修正记录也留在文档里——数字是否自洽（加速比不能小于 1、开销不能为负）比数字本身更重要。
 
@@ -201,7 +202,7 @@ meetgraph/
 ├── data/                # knowledge/（内部文档）、meetings/（历史纪要）、index/（索引）
 ├── docs/                # 架构 / 接口 / 开发 / 评测 / MCP / 实施计划
 ├── scripts/             # evaluate.py、evaluate_rag.py、evaluate_tools.py、rag_cli.py
-├── tests/               # pytest（195 个用例，含假 LLM 与假外部系统）
+├── tests/               # pytest（197 个用例，含假 LLM 与假外部系统）
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
@@ -303,7 +304,7 @@ docker compose up -d
 ## 测试与评测
 
 ```bash
-python -m pytest                      # 195 个用例：不联网、不写真实 Jira/飞书、不加载向量模型
+python -m pytest                      # 197 个用例：不联网、不写真实 Jira/飞书、不加载向量模型
 python -m pytest --cov=src            # 覆盖率
 python scripts/evaluate.py            # 会议流水线评测（编排收益 / 降级行为）
 python scripts/evaluate.py --live     # 追加真实 LLM 的抽取质量评测
@@ -311,6 +312,7 @@ python scripts/evaluate_rag.py        # RAG 检索评测（Recall@K / MRR / 术�
 python scripts/evaluate_rag.py --live # 追加真实 LLM 的答案级评测
 python scripts/evaluate_tools.py      # MCP 协议一致性 + 熔断/权限 + oracle 自检
 python scripts/evaluate_tools.py --live  # 真实 LLM 的工具选择评测
+python scripts/mcp_interop_check.py   # 用 Anthropic 官方 mcp SDK 复验互通性（需 pip install mcp）
 ```
 
 测试策略：外部世界全部替换成假实现（`tests/fakes.py` 的 `FakeLLM / FakeJiraClient / FakeFeishuClient`），但 Agent、Graph、报告落盘这些被测逻辑一律走真实代码路径；`FakeLLM` 可注入延迟与失败，因此「并行收益」和「降级行为」都是可断言的。MCP 那条路径更进一步：**真的把 Server 作为子进程拉起来**跑一遍 stdio 握手与工具调用，因为「客户端能接上」这件事没法靠单测内部函数证明。
@@ -332,7 +334,7 @@ python scripts/evaluate_tools.py --live  # 真实 LLM 的工具选择评测
 - **知识库语料是示例数据**：`data/knowledge`、`data/meetings` 是构造的示例（与项目业务场景一致），换成真实内部文档无需改代码，但当前数字只代表这套示例语料上的表现。
 - **术语层的增益有前提**：语义通道存在时术语扩展几乎不带来检索增益（实测 ≈0），它的价值在无向量模型的降级路径与生成侧的术语一致性；详见 docs/evaluation.md 的负结果记录。
 - **精排是确定性特征，不是 Cross-Encoder**：没有引入 reranker 模型（体积与推理成本），进一步优化空间在 `src/rag/rerank.py` 的权重与特征上。
-- **MCP 是自己实现的，不是官方 SDK**：好处是能讲清版本协商/传输/错误码且测试不联网，代价是未来要接远端 Server 时客户端侧仍需引 SDK。
+- **MCP 是自己实现的，不是官方 SDK**：好处是能讲清版本协商/传输/错误码且测试不联网，代价是未来要接远端 Server 时客户端侧仍需引 SDK。**互通行性用官方 SDK 客户端实测过**（`scripts/mcp_interop_check.py`）——正是这一步发现我们的版本协商停在两年前、以及 Windows 管道下用 GBK 写 stdout（自研客户端设了 `PYTHONIOENCODING` 把缺陷掩盖了）。
 - **工具调用用 JSON 协议而非原生 `tool_calls`**：当前 LLM 客户端（MiniMax `chatcompletion_v2`）不返回原生 tool_calls，用严格 JSON 复刻同等效果；模型偶尔输出非 JSON 时靠解析容错兜底。
 - **MCP 会话表在进程内**：`_mcp_sessions` 是 dict，多实例部署时 SSE 会话不跨实例，需要换 Redis；stdio 传输不受影响。
 - **工具选择评测样本只有 12 条**：只读任务 9 条上的首个工具准确率 0.889 属于小样本观察，不能当模型能力结论；写任务在评测时被策略隐藏（避免真的建单），因此只测「是否尝试调用写工具」。

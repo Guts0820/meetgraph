@@ -125,7 +125,11 @@ class McpServer:
 
     # ------------------------------------------------------------------
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
-        """版本协商：客户端给版本，服务端在支持列表里选，否则回自己的默认版本。"""
+        """版本协商：客户端给版本，服务端在支持列表里挑；不认识就回自己的最新版本。
+
+        按规范，服务端应当回一个**自己支持**的版本（可以是比客户端新的或旧的），
+        由客户端决定是否继续。所以这里不报错，而是把决定权交回客户端。
+        """
         client_version = str(params.get("protocolVersion", "")).strip()
         self.client_info = dict(params.get("clientInfo") or {})
         self.negotiated_protocol = (
@@ -167,6 +171,7 @@ class McpServer:
         """stdio 传输：一行一条 JSON-RPC 报文，读 EOF 退出。"""
         stdin = stdin or sys.stdin
         stdout = stdout or sys.stdout
+        _force_utf8_stdio(stdin, stdout)
         logger.info(f"[MCP] stdio server started ({self.info.name} {self.info.version})")
 
         while True:
@@ -182,6 +187,25 @@ class McpServer:
                 stdout.flush()
 
         logger.info("[MCP] stdio server stopped (EOF)")
+
+
+def _force_utf8_stdio(stdin: IO[str], stdout: IO[str]) -> None:
+    """把 stdio 传输的两个流钉死在 UTF-8。
+
+    这是踩过的坑：Windows 下 stdout 接管道时默认用 locale 编码（cp936/GBK），
+    带中文的响应会被写成 GBK 字节，第三方客户端按 UTF-8 解码直接
+    ``UnicodeDecodeError``（官方 mcp SDK 就是这么崩的）。协议规定消息是 UTF-8，
+    所以**服务端必须自己保证编码**，不能指望客户端替你设 ``PYTHONIOENCODING``
+    —— 自研客户端恰好设了它，于是这个缺陷被掩盖了很久。
+    """
+    for stream in (stdin, stdout):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # 测试里传进来的是 StringIO 之类
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="strict")
+        except (ValueError, OSError) as e:  # pragma: no cover - 流不支持重配置
+            logger.warning(f"[MCP] cannot force utf-8 on {stream!r}: {e}")
 
 
 async def main() -> int:

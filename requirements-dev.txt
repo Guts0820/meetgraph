@@ -1,0 +1,10 @@
+# MeetGraph 开发/验证依赖（运行时不装这些）
+# 安装: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# MCP 互通性验证：用 Anthropic 官方 SDK 当客户端连本项目的 MCP Server。
+# 自研客户端会迁就自研服务端，测不出协议偏差（曾漏掉「协议版本停在两年前」
+# 与「Windows 管道下用 GBK 写 stdout」两个真 bug），所以第三方客户端是必需品。
+# 用法: python scripts/mcp_interop_check.py
+mcp>=2.0

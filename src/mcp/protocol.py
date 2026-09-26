@@ -11,9 +11,21 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-# 协议版本：客户端在 initialize 里给出自己支持的版本，服务端回自己支持的版本
-PROTOCOL_VERSION = "2024-11-05"
-SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26")
+# 协议版本协商：客户端在 initialize 里给出它支持的版本，服务端从中挑一个自己支持的。
+#
+# 顺序从新到旧，**默认值必须是最新版本**：2026 年的现代客户端（官方 mcp SDK 2.x）
+# 默认用 2025-11-25、最高到 2026-07-28，已经不再支持 2024-11-05 这种老版本——
+# 一开始只回老版本，结果官方 SDK 连上来直接谈崩（详见 docs/mcp.md 的互通性记录）。
+# 旧版本保留在列表里只为兼容老客户端；我们实现的都是跨版本稳定的核心方法
+# （initialize / tools / resources / prompts / ping），具体能力面由 capabilities 声明限定。
+PROTOCOL_VERSION = "2026-07-28"
+SUPPORTED_PROTOCOL_VERSIONS = (
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+)
 
 SERVER_NAME = "meetgraph"
 SERVER_VERSION = "2.1.0"

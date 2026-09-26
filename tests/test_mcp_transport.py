@@ -1,20 +1,26 @@
 """MCP HTTP/SSE 传输与 stdio 传输测试。
 
 HTTP 部分用 TestClient 覆盖 POST /mcp 与 SSE 会话装配；stdio 部分真的把
-MCP Server 作为子进程拉起来跑一遍握手与工具调用——「Claude Desktop 能接上」
-这件事必须由真实进程验证，不能只测内部函数。
+MCP Server 作为子进程拉起来跑一遍握手与工具调用——「客户端能接上」这件事
+必须由真实进程验证，不能只测内部函数。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.mcp.client import McpStdioClient, text_content
 from src.websocket import server as server_module
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -185,6 +191,60 @@ def test_sse_messages_pushes_response_into_session(client: TestClient) -> None:
 # ----------------------------------------------------------------------
 # stdio（真实子进程）
 # ----------------------------------------------------------------------
+
+def test_stdio_writes_utf8_without_client_env(offline_env) -> None:
+    """服务端必须自己保证 stdout 是 UTF-8。
+
+    真实事故：Windows 下 stdout 接管道时默认走 locale 编码（cp936/GBK），带中文的
+    响应被写成 GBK 字节，官方 mcp SDK 按 UTF-8 解码直接 UnicodeDecodeError 谈崩。
+    自研客户端恰好设了 PYTHONIOENCODING=utf-8，把这个缺陷掩盖了很久。
+
+    所以这里**刻意剥掉** PYTHONUTF8 / PYTHONIOENCODING 再起服务端，直接断言原始字节。
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("PYTHONUTF8", "PYTHONIOENCODING")
+    }
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "src.mcp.server"],
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "clientInfo": {"name": "encoding-test", "version": "0"},
+        },
+    }
+    try:
+        raw, _ = process.communicate(
+            json.dumps(request).encode("utf-8") + b"\n", timeout=60
+        )
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+    # 服务端若按 GBK 写出，这一行就会抛 UnicodeDecodeError
+    payload = json.loads(raw.decode("utf-8").strip().splitlines()[0])
+    assert payload["result"]["protocolVersion"] == "2025-11-25"
+    assert "会议" in payload["result"]["instructions"]  # 中文必须能按 UTF-8 解出
+
+
+def test_protocol_version_negotiation_prefers_client_version() -> None:
+    """客户端给的版本在支持列表里就回显（现代客户端默认 2025-11-25）。"""
+    from src.mcp.protocol import PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
+
+    assert PROTOCOL_VERSION in SUPPORTED_PROTOCOL_VERSIONS
+    assert SUPPORTED_PROTOCOL_VERSIONS[0] == PROTOCOL_VERSION  # 最新在前
+
 
 async def test_stdio_end_to_end(offline_env) -> None:
     """真起子进程：握手 → 工具发现 → 工具调用 → 资源与提示 → 错误路径 → ping。"""
